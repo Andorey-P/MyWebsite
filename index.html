@@ -5,11 +5,17 @@
     <link rel="stylesheet" href="style.css">
     <link rel="icon" type="image/svg+xml" href="../vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite App</title>
+    <title>My Website</title>
   </head>
   <body>
-    <div id="app"></div>
-    <h1>HELLO DEAR WORD changed</h1>
-    <script type="module" src="/main.js"></script>
+    <div id="app">
+      <section id="loading-screen"><h4 class="pulse">LOADING</h4></section>
+      <div id="first-scene" style="background-color: rgb(238, 255, 0); width: 100vw; height: 100vh;"></div>
+      <div class="someSpace" style="background-color: blue; width: 100vw; height: 30vh;"></div>
+      <div id="second-scene" style="background-color: rgb(9, 165, 35); width: 100vw; height: 100vh;"></div>
+
+    </div>
+    
+    <script type="module" src="/src/main.js"></script>
   </body>
 </html>

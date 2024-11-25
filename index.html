@@ -2,20 +2,40 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="stylesheet" href="style.css">
-    <link rel="icon" type="image/svg+xml" href="../vite.svg" />
+    <link rel="stylesheet" href="src/CSS/style.css">
+    <link rel="stylesheet" href="src/CSS/palette.css">
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Website</title>
   </head>
-  <body>
+  <body class="hidden">
+    <section id="loading-screen" class="background-white">
+      <div class="bg-div">
+        <img id="loadingHeadGif" src="./gifs/LoadingHead3.gif" alt="loadingHead" width="512" height="512">
+        <div class="loading">LOADING.</div> 
+      </div>
+      <div class="checkeredDiv" style="font-size: .1vw;"></div>
+    </section>
+    
     <div id="app">
-      <section id="loading-screen"><h4 class="pulse">LOADING</h4></section>
-      <div id="first-scene" style="background-color: rgb(238, 255, 0); width: 100vw; height: 100vh;"></div>
-      <div class="someSpace" style="background-color: blue; width: 100vw; height: 30vh;"></div>
-      <div id="second-scene" style="background-color: rgb(9, 165, 35); width: 100vw; height: 100vh;"></div>
+      
+      <div id="first-scene" class="background-white" style=" width: 100vw; height: 100vh;">
+        <div class="noiseDiv" style="font-size: .1vw;"></div>
+        <div class="walk">
+          <img src="./gifs/walk.gif" alt="walk cycle">
+        </div>
+        <div class="landing-description color-red">
+          <div class="landing-description-left">
+            <h5 class="chapter-number" >&#8213; Chapter 1: welcome</h5>
+            <h1 class="split">Lorem, ipsum dolor sit amet consectetur adipisicing elit. Molestiae ut, placeat dicta eius laboriosam magnam beatae culpa. Voluptatem nesciunt, porro odit sapiente delectus culpa corrupti quod doloribus odio amet dolorum.</h1>
+          </div>
+          <div class="landing-description-right"></div>
+        </div>
+      </div>
+      <div id='someSpace' class="someSpace background-green" style=" width: 100vw; height: 30vh;"></div>
+      <div id="second-scene" class="background-blue" style="width: 100vw; height: 100vh;"></div>
 
     </div>
     
-    <script type="module" src="/src/main.js"></script>
+    <script type="module" src="/src/JS/main.js"></script>
   </body>
 </html>

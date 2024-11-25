@@ -1,0 +1,52 @@
+/* FONTS */
+
+@font-face {
+    font-family: LB-reg;
+    src: url(../../fonts/LibreBaskerville-Regular.ttf);
+   
+}
+@font-face {
+    font-family: LB-italic;
+    src: url(../../fonts/LibreBaskerville-Italic.ttf);
+   
+}
+@font-face {
+    font-family: LB-bold;
+    src: url(../../fonts/LibreBaskerville-Bold.ttf);
+   
+}
+@font-face {
+    font-family: archivo;
+    src: url(../../fonts/Archivo-Italic-VariableFont.ttf);
+   
+}
+
+/* COLORS */
+.color-blue {
+    color: #0049a7;
+}
+
+.color-green {
+    color: #227d7d;
+}
+
+.color-red {
+    color: #d04025;
+}
+
+.background-blue {
+    background-color: #0049a7;
+}
+
+.background-green {
+    background-color: #227d7d;
+}
+
+.background-red {
+    background-color: #d04025;
+}
+
+.background-white {
+    background-color: #ded9c3;
+}
+

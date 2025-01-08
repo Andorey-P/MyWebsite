@@ -11,20 +11,22 @@ body {
   overflow: hidden;
 }
 
+/* Loading section */
+
 #loading-screen {
   position: fixed;
-  z-index: 2;
+  z-index: 3;
   top: 0;
   left: 0;
-  width: 100%;
-  height: 100%;
+  width: 100vw;
+  height: 100vh;
   background-color: #ded9c3;
   display: flex;
   justify-content: center;
   align-items: center;
 }
 
-.bg-div {
+.loading-screen-bg {
   display: flex;
   flex-direction: column;
   position: absolute;
@@ -32,36 +34,70 @@ body {
   mix-blend-mode:multiply;
 }
 
-.loading {
+.loading-screen-bg-texture {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  background-image:
+  url(/textures/grid.jpg);
+  background-repeat: repeat;
+  background-size: auto; 
+  opacity: .6;
+  mix-blend-mode:overlay;
+}
+
+.loading-screen-bg-text {
   font-size: 2rem;
   color: black;
   font-family: LB-italic;
   text-decoration: line-through;
 }
 
-.word {overflow: hidden;}
-.walk {
+/* Landing section */
+
+#landing-scene {
+  width: 100vw;
+  height: 100vh;
+}
+
+#walkGif {
   width: 100vw;
   height: 100vh;
   position:absolute;
-  mix-blend-mode:color-burn;
+  mix-blend-mode:multiply;
   overflow:hidden ;
+  opacity: .95;
 
 }
 
-.landing-description {
+.landing-scene-description {
   width: 100vw;
   padding-left: 5vw;
-  z-index: 1;
+  z-index: 2;
   display: flex;
   font-size: 1.5rem;
   font-family: 'LB-reg';
   position: absolute;
 
 }
-.landing-description-left {
+.landing-scene-description-left {
   width: 30%;
   height: 80vh;
+}
+
+.noise-overlay {
+  width: 100vw;
+  height: 100vh;
+  position: fixed;
+  top:0;
+  left: 0;
+  z-index: 1;
+  background-image:
+  url(/textures/noise512.png);
+  background-repeat: repeat;
+  background-size: auto;
+  opacity: .2;
+  mix-blend-mode:overlay;
 }
 
 .chapter-number {
@@ -70,36 +106,6 @@ body {
   font-family: archivo;
 }
 
-.noiseDiv {
-  width: 100%;
-  height: 100%;
-  position: absolute;
-  background-image:
-  url(/textures/noise512.png);
-  background-repeat: repeat;
-  background-size: auto; /* Or adjust for specific effects */
-  opacity: .4;
-  mix-blend-mode:overlay;
-}
-
-.checkeredDiv {
-  width: 100%;
-  height: 100%;
-  position: absolute;
-  background-image:
-  url(/textures/grid.jpg);
-  background-repeat: repeat;
-  background-size: auto; /* Or adjust for specific effects */
-  opacity: .6;
-  mix-blend-mode:overlay;
-}
+.word {overflow: hidden;}
 
 
-#div1 {
-  height: 200px;
-  width: 200px;
-  margin: 100px;
-  padding: 10px;
-  border: 1px solid black;
-
-}

@@ -8,7 +8,7 @@ import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 
-export default class FirstScene extends BaseThreeJS{
+export default class LandingScene extends BaseThreeJS{
   constructor(containerId, loadingManager){
     super(containerId, loadingManager);
     this.clearAlpha = 0;
@@ -108,7 +108,7 @@ export default class FirstScene extends BaseThreeJS{
     const sphereGeom = new THREE.SphereGeometry(70,64,64);
     const sphereMat = new THREE.MeshStandardMaterial({color:'blue', roughness:0, metalness:1, flatShading:true});
     const sphere = new THREE.Mesh(sphereGeom, sphereMat);
-    sphere.position.set(200,100,0)
+    sphere.position.set(400,100,800)
     this.scene.add(sphere);
     sphere.castShadow = true;
 
@@ -142,28 +142,30 @@ export default class FirstScene extends BaseThreeJS{
   }
 
   update() {
-  // Calculate a scale factor for movement and lerping based on the camera's z position
-const zMin = 0;   // Closest z position
-const zMax = 1500; // Farthest z position
-const zFactor = THREE.MathUtils.clamp((this.camera.position.z - zMin) / (zMax - zMin), 0, 1);
+    // Calculate a scale factor for movement and lerping based on the camera's z position
+    const zMin = 0;   // Closest z position
+    const zMax = 1500; // Farthest z position
+    const zFactor = THREE.MathUtils.clamp((this.camera.position.z - zMin) / (zMax - zMin), 0, 1);
 
-// Target positions for x and y as z approaches 0
-const targetX = 0;
-const targetYFinal = 300;
+    // Target positions for x and y as z approaches 0
+    const targetX = 0;
+    const targetYFinal = 3000;
 
-// Smoothly interpolate the X position
-const desiredX = THREE.MathUtils.lerp(targetX, this.mouseX, zFactor);
-this.camera.position.x += (desiredX - this.camera.position.x) * 0.05;
+    // Smoothly interpolate the X position
+    const desiredX = THREE.MathUtils.lerp(targetX, this.mouseX, zFactor);
+    this.camera.position.x += (desiredX - this.camera.position.x) * 0.05;
+    // Calculate the desired Y position based on mouse movement
+    const mouseTargetY = -(this.mouseY - 200);
+    const clampedMouseY = THREE.MathUtils.clamp(mouseTargetY, 50, 200);
+    const desiredY = THREE.MathUtils.lerp(targetYFinal, clampedMouseY, zFactor);
+    this.camera.position.y += (desiredY - this.camera.position.y) * 0.05;
 
-// Calculate the desired Y position based on mouse movement
-const mouseTargetY = -(this.mouseY - 200);
-const clampedMouseY = THREE.MathUtils.clamp(mouseTargetY, 50, 200);
-const desiredY = THREE.MathUtils.lerp(targetYFinal, clampedMouseY, zFactor);
-this.camera.position.y += (desiredY - this.camera.position.y) * 0.05;
-
-// Keep the camera looking at the origin
-this.camera.lookAt(0, 0, 0);
-}
+    const rightVector = new THREE.Vector3();
+this.camera.getWorldDirection(rightVector);
+    // Keep the camera looking at the origin
+    const lookAtTarget = new THREE.Vector3(0, 0, 0);
+    this.camera.lookAt(lookAtTarget);
+  }
 
   onDocumentMouseMove( event ) {
     this.mouseX = ( event.clientX - this.windowHalfX );

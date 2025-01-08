@@ -7,33 +7,36 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Website</title>
   </head>
-  <body class="hidden">
+  <body>
+
     <section id="loading-screen" class="background-white">
-      <div class="bg-div">
+      <div class="loading-screen-bg">
         <img id="loadingHeadGif" src="./gifs/LoadingHead3.gif" alt="loadingHead" width="512" height="512">
-        <div class="loading">LOADING.</div> 
+        <div class="loading-screen-bg-text">LOADING.</div> 
       </div>
-      <div class="checkeredDiv" style="font-size: .1vw;"></div>
+      <div class="loading-screen-bg-texture"></div>
     </section>
     
     <div id="app">
-      
-      <div id="first-scene" class="background-white" style=" width: 100vw; height: 100vh;">
-        <div class="noiseDiv" style="font-size: .1vw;"></div>
-        <div class="walk">
-          <img src="./gifs/walk.gif" alt="walk cycle">
+
+      <div id="landing-scene" class="background-white">
+        <div id="walkGif">
+          <img src="./gifs/walk2.gif" alt="walk cycle">
         </div>
-        <div class="landing-description color-red">
-          <div class="landing-description-left">
+        <div class="landing-scene-description color-red">
+          <div class="landing-scene-description-left">
             <h5 class="chapter-number" >&#8213; Chapter 1: welcome</h5>
             <h1 class="split">Lorem, ipsum dolor sit amet consectetur adipisicing elit. Molestiae ut, placeat dicta eius laboriosam magnam beatae culpa. Voluptatem nesciunt, porro odit sapiente delectus culpa corrupti quod doloribus odio amet dolorum.</h1>
           </div>
-          <div class="landing-description-right"></div>
+          <div class="landing-scene-description-right"></div>
         </div>
+        <div class="noise-overlay"></div>
+
       </div>
+
       <div id='someSpace' class="someSpace background-green" style=" width: 100vw; height: 30vh;"></div>
       <div id="second-scene" class="background-blue" style="width: 100vw; height: 100vh;"></div>
-
+    
     </div>
     
     <script type="module" src="/src/JS/main.js"></script>

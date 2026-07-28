@@ -24,7 +24,7 @@ loadingGif.setAttribute('src', "./gifs/LoadingHead3.gif");
 loadingManager.onLoad = () => {
 	
 	setTimeout(function() {
-
+		history.scrollRestoration = "manual";
 		window.scrollTo(0, 0);
 		document.body.style.overflow = 'auto'
 		
@@ -64,6 +64,9 @@ loadingManager.onLoad = () => {
 const renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+
 
 // initialize all threejs scene ************TO DO: Manage the fact that the renderer takes the size of the cointainer, but we also want to pin the container and make it super large so we casn scroll
 const landingScene = new LandingScene('landing-scene',loadingManager, renderer);
@@ -101,8 +104,9 @@ const landingSceneTimeline = gsap.timeline({
 		trigger: '#landing-scene',
 		pin: true, // pin the trigger element while active
 		start: 'top top', // when the top of the trigger hits the top of the viewport
-		end: '+=1000', // end after scrolling 500px beyond the start
-		scrub: 5, // smooth scrubbing, takes 1 second to "catch up" to the scrollbar
+		end: 'bottom top', // shorter scroll range makes the movement feel faster
+		scrub: 1, // lower scrub means the camera reacts more directly to scrolling
+		markers: true
 	}
 })
 
@@ -121,35 +125,16 @@ function windowResize() {
 // onload function
 function onload(){
 	
+	// set gsap timeline for landing scene
 	landingSceneTimeline.to(activeScene.camera.position, {
 		z: 0,
-		ease:'power3.inOut'
-	}).to(activeScene.scene.getObjectByName("floor").rotation, {
-		z: 0, // Set a default value here
-		// onUpdate: () => {
-		// 	const floorRotation = activeScene.scene.getObjectByName("floor").rotation;
-		// 	floorRotation.z = activeScene.camera.position.x >= 0? -Math.PI / 4 : 3 * Math.PI / 4 ;
-		// },
-		onComplete: () => {
-			//walkCycleAnim.play();
-			
-		},
-		onReverseComplete: () => {
-			//walkCycleAnim.pause();
+		ease: 'power3.inOut',
+		duration: 1,
+	})
 
-		}
-	}).from('#walkGif', {
-		opacity: 0,
-	});
+	landingSceneTimeline.to({}, { duration: 1 }); 
 
-	let walkCycleAnim = gsap.to(activeScene.scene.getObjectByName("floor").material.map.offset, {
-		x: -100, // Target value for the x offset
-		y: -100, // Target value for the y offset
-		duration: 1100, // Duration over which the offset will slowly increment
-		ease: "none", // Linear (no easing)
-		paused: true,
-		repeat:-1
-	});
+
 };
 
 // // Setup gsap animations

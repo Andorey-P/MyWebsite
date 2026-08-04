@@ -4,6 +4,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 import BaseThreeJS from '../core/threejs-scene-module';
 import { createGridMaterial } from "../materials/materials.js";
+import { PALETTE } from "../materials/palette.js";
 
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -35,12 +36,12 @@ export default class LandingScene extends BaseThreeJS{
     this.camera.near = 1;
     this.camera.far = 20000;
     this.camera.updateProjectionMatrix();
-    this.scene.fog = new THREE.Fog( 0xded9c3, 3500, 5700 );
+    this.scene.fog = new THREE.Fog( PALETTE.paper, 3500, 5700 );
     // Real background instead of relying on canvas transparency: BokehPass's
     // shader always writes alpha=1, so anything left transparent (e.g. past
     // camera.far, where the floor gets culled) turns opaque black once the
     // composer is active. Match it to the fog color so it's seamless either way.
-    this.scene.background = new THREE.Color( 0xded9c3 );
+    this.scene.background = new THREE.Color( PALETTE.paper );
 
     // const loader = new RGBELoader();
     // loader.load('./HDRI/dusk.hdr', (tex)=>{
@@ -56,7 +57,7 @@ export default class LandingScene extends BaseThreeJS{
     const tileSize = 64; // Size of each square
     for (let y = 0; y < canvas.height / tileSize; y++) {
       for (let x = 0; x < canvas.width / tileSize; x++) {
-        ctx.fillStyle = (x + y) % 2 === 0 ? '#ffe3a6' : '#111111'; // Alternate colors
+        ctx.fillStyle = (x + y) % 2 === 0 ? '#ffe3a6' : '#fddd97'; // Alternate colors
         ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
       }
     }
@@ -82,8 +83,14 @@ export default class LandingScene extends BaseThreeJS{
     this.floor.material.polygonOffsetUnits = 1;
     this.scene.add(this.floor);
 
-    
-    
+    // Precompute a UV-sphere target for every floor vertex so the end-of-scroll
+    // "floor becomes a small sphere" beat can just lerp positions each frame
+    // instead of swapping geometry (keeps one buffer, one draw call, no popping).
+    this.floorMorphAmount = 0;
+    this.floorOriginalPositions = Float32Array.from(planeGeometry.attributes.position.array);
+    this.floorSpherePositions = this.computeFloorSphereTargets(this.floorOriginalPositions, 25);
+
+
 
     // load a texture for the stairs
     const texLoader = new THREE.TextureLoader(this.loadingManager);
@@ -131,27 +138,123 @@ export default class LandingScene extends BaseThreeJS{
     // this.scene.add(sphere);
     sphere.castShadow = true;
 
+    // The directional light's shadow camera aims at `target.matrixWorld`, which
+    // is only refreshed by the renderer for objects that are part of the scene
+    // graph. `sphere` above is intentionally never added to the scene, so using
+    // it directly as the light target left matrixWorld stuck at identity (i.e.
+    // the shadow camera aimed at the world origin instead of (0,70,600)) - a
+    // fixed misaim between the light and the boxes that showed up as a gap
+    // between each box and its own shadow, no amount of bias tuning fixes a
+    // wrong aim point. A dedicated Object3D actually in the scene graph fixes it.
+    const lightTarget = new THREE.Object3D();
+    lightTarget.position.set(0, 70, 600);
+    this.scene.add(lightTarget);
+
     const boxGeom = new THREE.BoxGeometry( 100, 1000, 100 );
-    const box = new THREE.Mesh( boxGeom, createGridMaterial({color: '#fae9c2',lineWidth: 0.012, roughness:0.0, tileY:35, tileX:4, lineColor: new THREE.Color(0x000000)}) );
-    box.position.set(0, 50, 400);
+    // Master material: never applied to a mesh directly, just a template.
+    // Each box below gets its own clone() so its tiling/colors can be tweaked
+    // independently through material.uniforms without touching the others.
+    // High roughness (matte, no specular highlight) and warm ink line color
+    // are what actually sell "printed textbook plate" over "glossy render" -
+    // the old roughness:0.0 put a hard digital highlight on every edge.
+    const boxMaterial = createGridMaterial({
+      color: PALETTE.paper,
+      lineWidth: 0.012,
+      lineOpacity: 0.55,
+      roughness: 0.85,
+      tileY: 36,
+      tileX: 4,
+      lineColor: new THREE.Color(PALETTE.ink)
+    });
+
+    // Separate cap material for the box's top/bottom (+y/-y) faces. BoxGeometry
+    // applies whatever material it's given to every face, so the side material's
+    // tileY:36 - tuned for the 1000-tall sides - was also landing on the 100x100
+    // cap, packing 36 lines into a face a tenth the height. tileY:4 here matches
+    // the cap's actual depth to the side material's tileX:4 (both span 100 units),
+    // keeping line density consistent across the whole box.
+    const boxCapMaterial = createGridMaterial({
+      color: PALETTE.paper,
+      lineWidth: 0.012,
+      lineOpacity: 0.55,
+      roughness: 0.85,
+      tileY: 4,
+      tileX: 4,
+      lineColor: new THREE.Color(PALETTE.ink)
+    });
+
+    // BoxGeometry's default face groups are ordered [+x, -x, +y, -y, +z, -z],
+    // so index 2/3 (top/bottom) get the cap material and the rest get the side one.
+    const makeBoxMaterials = (color) => {
+      const sides = boxMaterial.clone();
+      const caps = boxCapMaterial.clone();
+      sides.uniforms.uBaseColor.value.set(color);
+      caps.uniforms.uBaseColor.value.set(color);
+      return [sides, sides, caps, caps, sides, sides];
+    };
+
+    const box = new THREE.Mesh( boxGeom, makeBoxMaterials(PALETTE.brick) );
+    box.position.set(400, 50, 400);
     this.scene.add( box );
     box.castShadow = true;
+    this.box1 = box;
 
-    const box2 = box.clone();
-    box2.position.set(400, 50, 400);
+    const box2 = new THREE.Mesh(boxGeom, makeBoxMaterials(PALETTE.ochre));
+    box2.position.set(0, 50, 400);
     this.scene.add( box2 );
     box2.castShadow = true;
+    this.box2 = box2;
 
-    const box3 = box.clone();
+    const box3 = new THREE.Mesh(boxGeom, makeBoxMaterials(PALETTE.slate));
     box3.position.set(-400, 50, 400);
     this.scene.add( box3 );
     box3.castShadow = true;
+    this.box3 = box3;
 
-    const box4 = box.clone();
+    // box4 is squashed into a horizontal beam via scale (3, 0.1, .2), which
+    // compresses local Z (the cap's v-axis) 5x harder than local Y (the side
+    // faces' v-axis). A single shared tileY:4 divides pre-scale Z the same as
+    // pre-scale Y, so after scaling those 4 lines land in a strip a fifth the
+    // width - dense cross-hatching on the cap even though the sides look fine.
+    // Same fix as box1-3: split cap from sides so the cap's Z-axis tile count
+    // can be tuned down independently instead of inheriting the sides' value.
+    const box4SideMaterial = boxMaterial.clone();
+    box4SideMaterial.uniforms.uBaseColor.value.set(PALETTE.sage);
+    box4SideMaterial.uniforms.uTile.value.set(8, 4);
+
+    const box4CapMaterial = boxMaterial.clone();
+    box4CapMaterial.uniforms.uBaseColor.value.set(PALETTE.sage);
+    box4CapMaterial.uniforms.uTile.value.set(8, 1);
+
+    const box4 = new THREE.Mesh(boxGeom, [
+      box4SideMaterial, box4SideMaterial,
+      box4CapMaterial, box4CapMaterial,
+      box4SideMaterial, box4SideMaterial
+    ]);
     box4.scale.set(3, 0.1, .2);
     box4.position.set(0, 0, 0);
-    this.scene.add( box4 );
+    this.scene.add(box4);
     box4.castShadow = true;
+    this.box4 = box4;
+    // Exposed as this.boxN (rather than kept as function-local consts) so the
+    // scroll timeline in main.js can hand these transforms straight to GSAP.
+    this.verticalBoxes = [this.box1, this.box2, this.box3];
+    
+    
+    // Three break-able walls for the post-sphere sequence: the ball rolls
+    // right and cracks them open one at a time, Teorema-poster style. Each
+    // wall is built as two stacked halves sharing one invisible seam rather
+    // than a single mesh, so "breaking" is just kicking the two halves apart
+    // - no runtime geometry slicing needed. Spacing is small (100 apart, not
+    // the 400-1200 range other props use) because by this point in the
+    // timeline the camera sits close to the origin with fov:12 - the visible
+    // frame at that distance only spans roughly +-350 world units, not the
+    // thousands the earlier phases operate at. Spaced along +x, the direction
+    // the sphere will travel, so they're hit in this array's order.
+    this.walls = [250, 350, 450].map((x) => this.createSplitWall(boxMaterial, x));
+    this.horizontalBoxes = [this.box1, this.box2, this.box3];
+
+
 
     // Create a cone geometry and apply the grid material
     const coneGeom = new THREE.ConeGeometry( 30, 75, 32 );
@@ -170,10 +273,13 @@ export default class LandingScene extends BaseThreeJS{
     // this.scene.add( torus );
     torus.castShadow = true; 
 
-    // Add some lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, .1);
-    this.scene.add(ambientLight);
+    // Add some lighting. Warm-tinted instead of neutral white so shadows read
+    // as soft warm umber (like ink on cream paper) rather than harsh digital
+    // black, and the "sun" reads like late-afternoon light, not a studio key.
+    this.ambientLight = new THREE.AmbientLight(0xfff1da, .25);
+    this.scene.add(this.ambientLight);
 
+    this.directionalLight.color.set('#fff1da');
     this.directionalLight.position.set(-800,1000,2100)
     this.directionalLight.castShadow = true;
 
@@ -185,10 +291,10 @@ export default class LandingScene extends BaseThreeJS{
     this.directionalLight.shadow.camera.bottom = -1200;
     this.directionalLight.shadow.camera.near = 1;
     this.directionalLight.shadow.camera.far = 8000;
-    this.directionalLight.shadow.bias = -0.0004;
-    this.directionalLight.shadow.normalBias = 0.02;
+    this.directionalLight.shadow.bias = 0.0006;
+    this.directionalLight.shadow.normalBias = 0.025;
     this.directionalLight.shadow.radius = 2;
-    this.directionalLight.target = sphere;
+    this.directionalLight.target = lightTarget;
     this.scene.add(this.directionalLight);
     this.renderer.shadowMap.needsUpdate = true;
 
@@ -237,6 +343,83 @@ export default class LandingScene extends BaseThreeJS{
     this.mouseX = ( event.clientX - this.windowHalfX );
     this.mouseY = ( event.clientY - this.windowHalfY );
 
+  }
+
+  // Builds one "wall" as a group holding two half-height meshes stacked flush
+  // against each other (no visible seam at rest). rotateX(PI/2) on the group
+  // puts the bar's long axis on world Z rather than Y - by the time this
+  // wall matters (post floor-morph), the camera's up vector has already
+  // flipped to (0,0,-1) (see update()'s tiltAngle), so world Z is what
+  // actually reads as "vertical" on screen. Present at full scale from the
+  // start (visible underneath/behind the boxes and floor in earlier phases,
+  // same as the reference image already has them standing there) - breaking
+  // a wall later is just tweening topHalf/bottomHalf apart, no runtime
+  // geometry slicing required.
+  createSplitWall(material, x, z = 0, y = -100) {
+    const halfGeom = new THREE.BoxGeometry(100, 500, 100);
+    const wallMaterial = material.clone();
+    wallMaterial.uniforms.uBaseColor.value.set(PALETTE.ink);
+
+    const group = new THREE.Group();
+    group.position.set(x, y, z);
+    group.rotation.x = Math.PI / 2;
+    group.scale.set(0.4, 1, 0.4);
+    this.scene.add(group);
+
+    const topHalf = new THREE.Mesh(halfGeom, wallMaterial);
+    topHalf.position.y = 250;
+    topHalf.castShadow = true;
+    group.add(topHalf);
+
+    const bottomHalf = new THREE.Mesh(halfGeom, wallMaterial);
+    bottomHalf.position.y = -250;
+    bottomHalf.castShadow = true;
+    group.add(bottomHalf);
+
+    return { group, topHalf, bottomHalf };
+  }
+
+  // Maps each flat-plane vertex to a point on a sphere by wrapping it radially
+  // outward from the plane's center, like wrapping paper around a ball: the
+  // center becomes the top pole (phi=0) and points curl backward and under as
+  // their distance from center grows, reaching the bottom pole (phi=PI) at
+  // the plane's far corners. Unlike a UV-grid mapping (which collapses whole
+  // rows of vertices onto a single pole and creates a hard seam), this only
+  // degenerates at isolated corner points, so the curl reads as a smooth wrap
+  // instead of a pinched starburst.
+  computeFloorSphereTargets(positions, radius) {
+    const geomParams = this.floor.geometry.parameters;
+    const maxR = Math.sqrt(geomParams.width ** 2 + geomParams.height ** 2) / 2; // center-to-corner distance
+    const target = new Float32Array(positions.length);
+
+    for (let i = 0; i < positions.length; i += 3) {
+      const x = positions[i];
+      const y = positions[i + 1];
+      const r = Math.sqrt(x * x + y * y);
+      const theta = Math.atan2(y, x);
+      const phi = (r / maxR) * Math.PI;
+
+      target[i] = radius * Math.sin(phi) * Math.cos(theta);
+      target[i + 1] = radius * Math.sin(phi) * Math.sin(theta);
+      target[i + 2] = radius * Math.cos(phi);
+    }
+
+    return target;
+  }
+
+  // Lerps the floor's vertices between its flat resting shape and the
+  // precomputed sphere target. Called from the scroll timeline with t in 0..1.
+  setFloorMorphAmount(t) {
+    this.floorMorphAmount = t;
+    const posAttr = this.floor.geometry.attributes.position;
+    const original = this.floorOriginalPositions;
+    const target = this.floorSpherePositions;
+
+    for (let i = 0; i < original.length; i++) {
+      posAttr.array[i] = THREE.MathUtils.lerp(original[i], target[i], t);
+    }
+    posAttr.needsUpdate = true;
+    this.floor.geometry.computeVertexNormals();
   }
 
   initPostprocessing() {

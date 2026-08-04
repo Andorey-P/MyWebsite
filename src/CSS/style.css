@@ -5,9 +5,15 @@ body {
   padding: 0;
 }
 
+/* Not display:flex: a flex container's children stack the same way plain
+   block children already do here (nobody uses align-items/justify-content),
+   but flex breaks GSAP ScrollTrigger's pin-spacer resize - a flex item's
+   height set via inline style after the initial layout doesn't reliably
+   grow the flex container's own height, so any pin `end` beyond the
+   trigger's natural size silently gets clamped back to that natural size.
+   Confirmed by isolated repro: identical markup, flex vs. block, only flex
+   caps the spacer. */
 #app {
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
 }
 

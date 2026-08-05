@@ -12,13 +12,29 @@ import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 
+// Vertical FOV the scene was hand-tuned against, on a 16:9 desktop viewport.
+// FOV in three.js is vertical, so horizontal framing is a function of
+// (fov, aspect) - a portrait phone (aspect ~0.5) shows roughly a third of
+// the horizontal scene a 16:9 desktop does at the same BASE_FOV.
+const BASE_FOV = 40;
+const DESIGN_REFERENCE_ASPECT = 16 / 9;
+// How far FOV is allowed to widen to claw back that lost horizontal frame.
+// Past this, widening further reads as fisheye distortion rather than "more
+// visible scene" - narrower aspects than this clamp can reach stay cropped
+// until the scene's own layout (box/wall spacing) is made aspect-aware.
+const MAX_FOV = 65;
+// Idle-shot camera height (see update()). Lower on portrait screens so the
+// establishing shot doesn't read as mostly floor - tune to taste.
+const TARGET_Y_FINAL = 2500;
+const TARGET_Y_FINAL_PORTRAIT = 1700;
+
 export default class LandingScene extends BaseThreeJS{
   constructor(containerId, loadingManager, renderer){
     super(containerId, loadingManager, renderer);
     this.clearAlpha = 0;
     this.mouseX = 0;
     this.mouseY = 0;
-    this.camera.fov = 40;
+    this.camera.fov = this.getResponsiveFov(this.camera.aspect);
     this.floor = null;
     this.composer = null;
 		this.windowHalfX = window.innerWidth / 2;
@@ -33,6 +49,7 @@ export default class LandingScene extends BaseThreeJS{
   init() {
 
     this.camera.position.z = 1500;
+
     this.camera.near = 1;
     this.camera.far = 20000;
     this.camera.updateProjectionMatrix();
@@ -42,12 +59,6 @@ export default class LandingScene extends BaseThreeJS{
     // camera.far, where the floor gets culled) turns opaque black once the
     // composer is active. Match it to the fog color so it's seamless either way.
     this.scene.background = new THREE.Color( PALETTE.paper );
-
-    // const loader = new RGBELoader();
-    // loader.load('./HDRI/dusk.hdr', (tex)=>{
-    //   tex.mapping = THREE.EquirectangularReflectionMapping;    
-    //   sphereMat.envMap = tex;
-    // });
       
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
@@ -57,7 +68,7 @@ export default class LandingScene extends BaseThreeJS{
     const tileSize = 64; // Size of each square
     for (let y = 0; y < canvas.height / tileSize; y++) {
       for (let x = 0; x < canvas.width / tileSize; x++) {
-        ctx.fillStyle = (x + y) % 2 === 0 ? '#ffe3a6' : '#fddd97'; // Alternate colors
+        ctx.fillStyle = (x + y) % 2 === 0 ? '#ffe2ac' : '#FAD287'; // Alternate colors
         ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
       }
     }
@@ -66,12 +77,12 @@ export default class LandingScene extends BaseThreeJS{
     const texture = new THREE.CanvasTexture(canvas);
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(100, 100); // Adjust repeat for larger patterns if needed
+    texture.repeat.set(12, 12); // Adjust repeat for larger patterns if needed
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.needsUpdate = true;
 
     // Create the floor plane
-    const planeGeometry = new THREE.PlaneGeometry(60000, 60000, 200, 200); // Width and height of the plane
+    const planeGeometry = new THREE.PlaneGeometry(10000, 10000, 30, 30); // Width and height of the plane
     const planeMaterial = new THREE.MeshStandardMaterial({ map: texture });
     this.floor = new THREE.Mesh(planeGeometry, planeMaterial);
     this.floor.name = "floor";
@@ -104,39 +115,6 @@ export default class LandingScene extends BaseThreeJS{
     const gltfloader = new GLTFLoader(this.loadingManager);
     const tillesBlackMat = new THREE.MeshStandardMaterial({ color: 'white', map:mytex});
 
-    gltfloader.load('./models/HELLO2.glb', (gltf) => {
-      const model = gltf.scene;
-
-      model.traverse((child) => {
-        if (child.isMesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
-        }
-      });
-      // model.children[0].children[0].children[2].material = tillesBlackMat; // Set the color of the second child to black
-      // model.children[0].children[0].children[0].material.color.set('#fff5de');
-      // model.children[0].children[0].children[1].material.color.set('#6683a3');
-      // model.children[0].children[0].children[3].material.color.set('#ffde84');
-
-      // model.scale.set(60, 60, 60);
-      // model.rotation.y = Math.PI/4; // Rotate the model 180 degrees around the Y-axis
-      // model.position.set(1500, 2, 700);
-      model.scale.set(50, 50, 50);
-            model.rotation.z = Math.PI/4; // Rotate the model 180 degrees around the Y-axis
-            model.rotation.x = Math.PI/2; // Rotate the model 180 degrees around the Y-axis
-            model.position.set(0, 10, 0);
-
-
-
-      // this.scene.add(model);
-    });
-
-    //create geometry
-    const sphereGeom = new THREE.SphereGeometry(70,64,64);
-    const sphere = new THREE.Mesh(sphereGeom, createGridMaterial({roughness:0.5, metalness:.0, tileY:10}));
-    sphere.position.set(0,70,600)
-    // this.scene.add(sphere);
-    sphere.castShadow = true;
 
     // The directional light's shadow camera aims at `target.matrixWorld`, which
     // is only refreshed by the renderer for objects that are part of the scene
@@ -194,7 +172,7 @@ export default class LandingScene extends BaseThreeJS{
     };
 
     const box = new THREE.Mesh( boxGeom, makeBoxMaterials(PALETTE.brick) );
-    box.position.set(400, 50, 400);
+    box.position.set(300, 50, 400);
     this.scene.add( box );
     box.castShadow = true;
     this.box1 = box;
@@ -206,7 +184,7 @@ export default class LandingScene extends BaseThreeJS{
     this.box2 = box2;
 
     const box3 = new THREE.Mesh(boxGeom, makeBoxMaterials(PALETTE.slate));
-    box3.position.set(-400, 50, 400);
+    box3.position.set(-300, 50, 400);
     this.scene.add( box3 );
     box3.castShadow = true;
     this.box3 = box3;
@@ -316,7 +294,7 @@ export default class LandingScene extends BaseThreeJS{
 
     // Target positions for x and y as z approaches 0
     const targetX = 0;
-    const targetYFinal = 2500;
+    const targetYFinal = this.camera.aspect < 1 ? TARGET_Y_FINAL_PORTRAIT : TARGET_Y_FINAL;
 
     // Smoothly interpolate the X position of the camera
     const desiredX = THREE.MathUtils.lerp(targetX, this.mouseX, zFactor) * 0.4; // Adjust the multiplier to control the influence of mouse movement (location)
@@ -337,6 +315,19 @@ export default class LandingScene extends BaseThreeJS{
     this.camera.up.set(0, Math.cos(tiltAngle), -Math.sin(tiltAngle));
     this.camera.rotation.order = 'YXZ';
     this.camera.lookAt(this.lookAtTarget);
+  }
+
+  // Solves for the vertical FOV that reproduces BASE_FOV's horizontal frame
+  // at a different aspect ratio, clamped to MAX_FOV so narrow aspects widen
+  // toward "see more of the scene" without tipping into fisheye distortion.
+  // At/above the design reference aspect this returns exactly BASE_FOV, so
+  // desktop framing is unchanged.
+  getResponsiveFov(aspect) {
+    const baseFovRad = THREE.MathUtils.degToRad(BASE_FOV);
+    const targetHorizontalFovRad = 2 * Math.atan(Math.tan(baseFovRad / 2) * DESIGN_REFERENCE_ASPECT);
+    const fittedFovRad = 2 * Math.atan(Math.tan(targetHorizontalFovRad / 2) / aspect);
+    const fittedFovDeg = THREE.MathUtils.radToDeg(fittedFovRad);
+    return THREE.MathUtils.clamp(fittedFovDeg, BASE_FOV, MAX_FOV);
   }
 
   onDocumentMouseMove( event ) {

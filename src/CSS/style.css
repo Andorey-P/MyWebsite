@@ -5,6 +5,7 @@ body {
   padding: 0;
 }
 
+
 /* Not display:flex: a flex container's children stack the same way plain
    block children already do here (nobody uses align-items/justify-content),
    but flex breaks GSAP ScrollTrigger's pin-spacer resize - a flex item's
@@ -82,14 +83,60 @@ body {
   padding-left: 5vw;
   z-index: 2;
   display: flex;
-  font-size: 1.5rem;
+  /* Scales from 16px at small phones up to the original fixed 1.5rem
+     (reached ~1200px viewport width, so laptop/desktop looks unchanged). */
+  font-size: clamp(1rem, 0.82rem + 0.9vw, 1.5rem);
   font-family: 'LB-reg';
   position: absolute;
 
 }
 .landing-scene-description-left {
   width: 30%;
+  min-width: 320px;
+  max-width: 560px;
   height: 80vh;
+  text-align: left;
+}
+.landing-scene-description-right {
+  flex: 1;
+}
+
+/* Below this, the two-column side layout no longer has room to breathe -
+   collapse to a single centered column instead of squeezing the text
+   column down to a sliver of the viewport. The max-height leg catches
+   landscape phones: they're often wider than 767px (so max-width alone
+   would miss them) but only ~350-430px tall. */
+@media (max-width: 767px), (max-height: 500px) {
+  .landing-scene-description {
+    padding-left: 0;
+    padding-top: 6vh;
+    justify-content: center;
+  }
+
+  .landing-scene-description-left {
+    width: 88vw;
+    min-width: 0;
+    max-width: 480px;
+    height: auto;
+    /* Block is centered by the parent's justify-content: center; the text
+       itself stays left-aligned rather than centered or justified. */
+    text-align: left;
+  }
+
+  .landing-scene-description-right {
+    display: none;
+  }
+}
+
+/* Landscape phones match the rule above on height, but the base font-size
+   clamp (further up) scales off vw - on a ~800px-wide landscape phone
+   that sizes text as if there were desktop-height room to fit it in, when
+   there's really only ~350-430px of viewport height available. Clamp
+   against vh here instead so it can't outgrow the short viewport. */
+@media (max-height: 500px) {
+  .landing-scene-description {
+    font-size: clamp(0.85rem, 0.55rem + 2.6vh, 1.05rem);
+  }
 }
 
 .noise-overlay {

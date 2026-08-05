@@ -14,6 +14,34 @@ let activeScene = null;
 let fps = 60;
 const title = new SplitType(".split");
 
+// SplitType measures line/word wrapping once at split time, so a viewport
+// resize (or orientation change) that reflows the text leaves the old line
+// groupings stale until the text is re-split against the new layout.
+// Debounced so rapid resize events don't thrash the DOM - and, on mobile,
+// so a scroll-driven address-bar collapse (which also fires `resize`) only
+// triggers this once things settle, not every frame of the scroll.
+let splitResizeTimeout;
+window.addEventListener('resize', () => {
+	clearTimeout(splitResizeTimeout);
+	splitResizeTimeout = setTimeout(() => {
+		title.split();
+		// Only scenes that opt in (LandingScene) define this. Deliberately not
+		// done in the per-frame resizeToDisplaySize() below: that fires on every
+		// canvas size change, which on mobile includes the address bar
+		// collapsing/expanding mid-scroll - reassigning fov there would fight
+		// the scroll-driven fov:12 tween in the landing timeline every frame.
+		// Here it only runs once per settled resize, then ScrollTrigger.refresh()
+		// (with invalidateOnRefresh: true on that timeline) re-captures the
+		// tween's "from" value against the new fov and re-renders at the
+		// current scroll progress, instead of racing it.
+		if (activeScene && typeof activeScene.getResponsiveFov === 'function') {
+			activeScene.camera.fov = activeScene.getResponsiveFov(activeScene.camera.aspect);
+			activeScene.camera.updateProjectionMatrix();
+		}
+		ScrollTrigger.refresh();
+	}, 200);
+});
+
 const loadingManager = new LoadingManager();
 gsap.registerPlugin(ScrollTrigger);
 
@@ -200,7 +228,7 @@ function onload(){
 	}, 3);
 
 	landingSceneTimeline.to(landingScene.verticalBoxes.map(box => box.position), {
-		x: (i, target) => target.x + 200 * (i + 1), // box1 +300, box2 +600, box3 +900
+		x: (i, target) => target.x + 125 * (i + 1), // box1 +300, box2 +600, box3 +900
 		z:1200,
 		ease: 'power3.out',
 		duration: 1,

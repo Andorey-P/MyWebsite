@@ -161,7 +161,7 @@ const landingSceneTimeline = gsap.timeline({
 		end: () => '+=' + (window.innerHeight * 2),
 		invalidateOnRefresh: true,
 		scrub: 1, // lower scrub means the camera reacts more directly to scrolling
-		markers: true
+		markers: false
 	}
 })
 

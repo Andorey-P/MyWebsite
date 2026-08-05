@@ -56,8 +56,167 @@ body {
 .loading-screen-bg-text {
   font-size: 2rem;
   color: black;
-  font-family: LB-italic;
-  text-decoration: line-through;
+  font-family: "Neue Haas Grotesk";
+  font-style: italic;
+}
+
+/* Site header */
+
+#site-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  width: 100vw;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 1.6rem 5vw;
+  font-family: 'Neue Haas Grotesk';
+  color: #2a2018;
+  background: linear-gradient(to bottom, rgba(222, 217, 195, 0.2), rgba(222, 217, 195, 0));
+  border-bottom: 1px solid rgba(42, 32, 24, 0.15);
+  pointer-events: none;
+}
+
+#site-header a {
+  pointer-events: auto;
+}
+
+.site-header-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+.site-header-star {
+  width: 1.1rem;
+  height: 1.1rem;
+  flex-shrink: 0;
+  fill: #bd4a30;
+  transition: transform 0.4s ease;
+}
+
+.site-header-brand:hover .site-header-star {
+  transform: rotate(90deg);
+}
+
+.site-header-brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.site-header-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.site-header-tagline {
+  font-size: 0.65rem;
+  letter-spacing: 0.02em;
+  opacity: 0.6;
+}
+
+.site-header-nav {
+  display: flex;
+  align-items: center;
+  gap: clamp(1.25rem, 2.5vw, 2.75rem);
+}
+
+.site-header-link {
+  position: relative;
+  color: inherit;
+  text-decoration: none;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding-bottom: 0.2rem;
+}
+
+.site-header-link::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: right;
+  transition: transform 0.3s ease;
+}
+
+.site-header-link:hover::after {
+  transform: scaleX(1);
+  transform-origin: left;
+}
+
+/* One "you are here" accent in the nav, same spot color as the headline -
+   mirrors a catalog index highlighting the current section rather than
+   coloring every link the same. */
+.site-header-link[aria-current="page"] {
+  color: #bd4a30;
+}
+.site-header-link[aria-current="page"]::after {
+  transform: scaleX(1);
+}
+
+.site-header-sphere {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 30%, #6b5f52, #2a2018 70%);
+  transition: transform 0.3s ease;
+}
+
+.site-header-sphere:hover {
+  transform: scale(1.15);
+}
+
+@media (max-width: 700px) {
+  #site-header {
+    padding: 1.1rem 6vw;
+    gap: 1rem;
+  }
+
+  .site-header-tagline {
+    display: none;
+  }
+
+  .site-header-nav {
+    gap: 1rem;
+  }
+
+  .site-header-link {
+    font-size: 0.65rem;
+  }
+}
+
+@media (max-width: 460px) {
+  #site-header {
+    flex-wrap: wrap;
+    row-gap: 0.6rem;
+    padding-bottom: 1rem;
+  }
+
+  .site-header-nav {
+    width: 100%;
+    justify-content: space-between;
+    gap: 0.4rem;
+  }
+
+  .site-header-link {
+    font-size: 0.6rem;
+    letter-spacing: 0.04em;
+  }
 }
 
 /* Landing section */
@@ -79,26 +238,164 @@ body {
 
 
 .landing-scene-description {
+  box-sizing: border-box;
   width: 100vw;
   padding-left: 5vw;
+  /* Clears the fixed #site-header so the chapter number/title never sit
+     underneath its gradient band. */
+  padding-top: 7rem;
   z-index: 2;
   display: flex;
   /* Scales from 16px at small phones up to the original fixed 1.5rem
      (reached ~1200px viewport width, so laptop/desktop looks unchanged). */
   font-size: clamp(1rem, 0.82rem + 0.9vw, 1.5rem);
-  font-family: 'LB-reg';
+  font-family: 'Ivar Display';
+  color: #2a2018;
   position: absolute;
 
 }
 .landing-scene-description-left {
-  width: 30%;
+  width: 40%;
   min-width: 320px;
-  max-width: 560px;
+  max-width: 760px;
   height: 80vh;
   text-align: left;
 }
+
+/* One serif, single weight, throughout the editorial column - hierarchy
+   comes from scale and the one spot color on the headline, not from
+   synthesizing a bold/italic cut that Ivar Display doesn't actually have. */
+.landing-scene-description-left h5.split {
+  font-size: clamp(1.05rem, 0.95rem + 0.6vw, 1.4rem);
+  font-weight: 400;
+  margin: 0 0 0.15em;
+}
+
+.landing-scene-description-left h1.split {
+  font-size: clamp(2.8rem, 1.2rem + 5.8vw, 6.4rem);
+  font-weight: 400;
+  line-height: 0.98;
+  letter-spacing: -0.01em;
+  color: #bd4a30;
+  margin: 0 0 0.5em;
+}
+
+.landing-scene-description-left h3.split {
+  font-size: clamp(1rem, 0.9rem + 0.4vw, 1.2rem);
+  font-weight: 400;
+  line-height: 1.6;
+  max-width: 34ch;
+  opacity: 0.82;
+}
+
 .landing-scene-description-right {
   flex: 1;
+}
+
+/* Oversized outlined folio number, mid-century catalog/exhibition-plate
+   convention - stamped into the empty corner and cropped by the frame,
+   like a plate number cut off by the edge of the page, rather than
+   floating center-stage where it competed with the 3D piece. */
+.landing-scene-index-mark {
+  position: absolute;
+  right: 4vw;
+  bottom: 9vh;
+  z-index: 2;
+  font-family: 'Ivar Display';
+  font-size: clamp(5rem, 2.5rem + 7vw, 10rem);
+  line-height: 1;
+  color: transparent;
+  -webkit-text-stroke: 1px rgba(42, 32, 24, 0.18);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Print registration-mark corners: frames the hero like a designed plate
+   rather than a floating text block. Bottom corners only, so they never
+   compete with the fixed site header along the top edge. */
+.landing-scene-corner {
+  position: absolute;
+  bottom: 24px;
+  width: 14px;
+  height: 14px;
+  z-index: 2;
+  pointer-events: none;
+}
+.landing-scene-corner::before,
+.landing-scene-corner::after {
+  content: '';
+  position: absolute;
+  background: rgba(42, 32, 24, 0.35);
+}
+.landing-scene-corner::before {
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+.landing-scene-corner::after {
+  left: 50%;
+  top: 0;
+  height: 100%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+.landing-scene-corner-bl { left: 24px; }
+.landing-scene-corner-br { right: 24px; }
+
+.landing-scene-meta {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4vh;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 5vw;
+  font-family: 'Neue Haas Grotesk';
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #2a2018;
+  opacity: 0.6;
+}
+
+.landing-scene-meta-right {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.landing-scene-scroll-line {
+  position: relative;
+  width: 1px;
+  height: 26px;
+  background: rgba(42, 32, 24, 0.3);
+  overflow: hidden;
+}
+.landing-scene-scroll-line::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -100%;
+  width: 100%;
+  height: 100%;
+  background: #bd4a30;
+  animation: landingScrollDrop 1.8s ease-in-out infinite;
+}
+@keyframes landingScrollDrop {
+  0% { top: -100%; }
+  60% { top: 100%; }
+  100% { top: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-scene-scroll-line::after {
+    animation: none;
+    top: 0;
+  }
 }
 
 /* Below this, the two-column side layout no longer has room to breathe -
@@ -109,7 +406,7 @@ body {
 @media (max-width: 767px), (max-height: 500px) {
   .landing-scene-description {
     padding-left: 0;
-    padding-top: 6vh;
+    padding-top: calc(7rem + 6vh);
     justify-content: center;
   }
 
@@ -125,6 +422,21 @@ body {
 
   .landing-scene-description-right {
     display: none;
+  }
+
+  /* The oversized folio watermark and the studio signature only have room
+     to breathe against the wide desktop composition - both drop out here
+     rather than fight the single centered text column for attention. */
+  .landing-scene-index-mark {
+    display: none;
+  }
+
+  .landing-scene-meta-left {
+    display: none;
+  }
+
+  .landing-scene-meta {
+    justify-content: flex-end;
   }
 }
 
@@ -155,9 +467,21 @@ body {
 }
 
 .chapter-number {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
   font-size: .7rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  font-family: archivo;
+  font-family: 'Neue Haas Grotesk';
+  margin: 0 0 1.75rem;
+}
+.chapter-number::before {
+  content: '';
+  width: 28px;
+  height: 1px;
+  background: #bd4a30;
 }
 
 .word {overflow: hidden;}

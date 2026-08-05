@@ -9,6 +9,26 @@
   </head>
   <body>
 
+    <header id="site-header">
+      <a href="index.html" class="site-header-brand" aria-label="Andrei Platonov — Home">
+        <svg class="site-header-star" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 0C12 6 13 10 24 12C13 14 12 18 12 24C12 18 11 14 0 12C11 10 12 6 12 0Z"/>
+        </svg>
+        <span class="site-header-brand-text">
+          <span class="site-header-name color-red">Andrei Platonov</span>
+          <span class="site-header-tagline">Portfolio</span>
+        </span>
+      </a>
+
+      <nav class="site-header-nav" aria-label="Primary" >
+        <a href="index.html" class="site-header-link" aria-current="page">Home</a>
+        <a href="#" class="site-header-link">Works</a>
+        <a href="#" class="site-header-link">About</a>
+        <a href="#" class="site-header-link">Contact</a>
+        <!-- <a href="#" class="site-header-sphere" aria-label="Menu"></a> -->
+      </nav>
+    </header>
+
     <section id="loading-screen" class="background-white">
       <div class="loading-screen-bg">
         <img id="loadingHeadGif" src="./gifs/LoadingHead3.gif" alt="loadingHead" width="512" height="512">
@@ -20,15 +40,27 @@
     <div id="app">
 
       <div id="landing-scene" class="background-white">
-        <div class="landing-scene-description color-red">
+
+        <div class="landing-scene-index-mark" aria-hidden="true">01</div>
+
+        <div class="landing-scene-description">
           <div class="landing-scene-description-left">
-            <h5 class="chapter-number" >&#8213; Chapter 1: welcome</h5>
+            <h5 class="chapter-number">Chapter 01 — Welcome</h5>
             <h5 class="split">An exhibition</h5>
             <h1 class="split">of Visual Reasoning</h1>
             <h3 class="split">This document records a series of chapters exploring perception, interaction, and visual reasoning. The projects are observations; the process is the subject. </h3>
           </div>
           <div class="landing-scene-description-right"></div>
         </div>
+
+        <span class="landing-scene-corner landing-scene-corner-bl" aria-hidden="true"></span>
+        <span class="landing-scene-corner landing-scene-corner-br" aria-hidden="true"></span>
+
+        <div class="landing-scene-meta">
+          <span class="landing-scene-meta-left">Visual Research — Andrei Platonov</span>
+          <span class="landing-scene-meta-right">Scroll to continue<span class="landing-scene-scroll-line"></span></span>
+        </div>
+
         <div class="noise-overlay"></div>
 
       </div>

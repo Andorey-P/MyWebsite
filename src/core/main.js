@@ -8,11 +8,22 @@ import LandingScene from "../scenes/landing-scene";
 import SecondScene from '../scenes/second-scene';
 import Lenis from 'lenis'
 import { PALETTE } from '../materials/palette.js';
+import { decodeFinalFrame, replaceImgWithCanvas } from './gifScrubber.js';
 
 
 let activeScene = null;
 let fps = 60;
 const title = new SplitType(".split");
+// Chapter two's headline/body split separately from '.split' above so its
+// chars are excluded from loadingTL's page-load '.split .char' reveal -
+// chapter two stays hidden until the scroll-driven reveal in onload() below.
+const chapterTwoTitle = new SplitType(".split-reveal");
+gsap.set('.split-reveal .char', { yPercent: 100 });
+// Chapter three gets its own split class for the same reason - keeps its
+// chars out of both the page-load '.split .char' reveal and chapter two's
+// '.split-reveal .char' trigger, since it's triggered independently later.
+const chapterThreeTitle = new SplitType(".split-reveal-three");
+gsap.set('.split-reveal-three .char', { yPercent: 100 });
 
 // SplitType measures line/word wrapping once at split time, so a viewport
 // resize (or orientation change) that reflows the text leaves the old line
@@ -25,6 +36,13 @@ window.addEventListener('resize', () => {
 	clearTimeout(splitResizeTimeout);
 	splitResizeTimeout = setTimeout(() => {
 		title.split();
+		// chapterTwoTitle/chapterThreeTitle deliberately aren't re-split here:
+		// SplitType.split() tears down and recreates the .char elements, which
+		// would orphan the GSAP tweens in chapterTwoTimeline/chapterThreeTimeline
+		// (see onload() in this file) that are bound to the old nodes - those
+		// tweens live for the whole session, unlike '.split .char' above which
+		// only plays once at load and is never referenced again. The reveal
+		// doesn't depend on line-wrap grouping, so skipping the re-split is safe.
 		// Only scenes that opt in (LandingScene) define this. Deliberately not
 		// done in the per-frame resizeToDisplaySize() below: that fires on every
 		// canvas size change, which on mobile includes the address bar
@@ -45,18 +63,21 @@ window.addEventListener('resize', () => {
 const loadingManager = new LoadingManager();
 gsap.registerPlugin(ScrollTrigger);
 
-//Restart Gif animation
-const loadingGif = document.getElementById('loadingHeadGif');
-loadingGif.setAttribute('src', "./gifs/LoadingHead3.gif");
+// Loading gif - left as a normal autoplaying <img> (same as before, so it
+// plays at its own steady authored pace with zero added latency) for the
+// whole loading phase. Decoding its final frame happens quietly in the
+// background in parallel so it's ready the moment loading finishes.
+const loadingGifImg = document.getElementById('loadingHeadGif');
+const finalGifFramePromise = decodeFinalFrame('./gifs/LoadingHead3.gif');
 
 // Hide the loading screen when all assets are loaded
 loadingManager.onLoad = () => {
-	
+
 	setTimeout(function() {
 		history.scrollRestoration = "manual";
 		window.scrollTo(0, 0);
 		document.body.style.overflow = 'auto'
-		
+
 		// Initialize Lenis
 		const lenis = new Lenis();
 
@@ -72,24 +93,61 @@ loadingManager.onLoad = () => {
 		gsap.ticker.lagSmoothing(0);
 	}, 0);
 
-	// Loading page transition animation
-	const loadingTL = gsap.timeline();
-	loadingTL.to('.loading-screen-bg', {
-		opacity:0, ease:'power1.in', duration:.8
-	})
-	.to('#loading-screen', {
-		yPercent:-100,
-		ease:'power3.inOut',
-		duration:1
-	}).from('.split .char', {
-		yPercent:100,
-		ease: 'power1.inOut',
-		duration:1,
-		stagger:.001
-	})
+	// Freeze the gif exactly where it happens to be and dissolve into its
+	// final frame over half a second, instead of cutting away mid-loop or
+	// forcing it to visibly jump/skip ahead to the end.
+	finalGifFramePromise.then((finalFrame) => {
+		const frozen = document.createElement('canvas');
+		frozen.width = finalFrame.width;
+		frozen.height = finalFrame.height;
+		frozen.getContext('2d').drawImage(loadingGifImg, 0, 0, frozen.width, frozen.height);
 
-	//Start threejs animation loops
-	animate();
+		const canvas = replaceImgWithCanvas(loadingGifImg, finalFrame.width, finalFrame.height);
+		const ctx = canvas.getContext('2d');
+		ctx.drawImage(frozen, 0, 0);
+
+		// Deferred one extra frame so gsap's ticker clock (driven by
+		// requestAnimationFrame) is definitely fresh before the tween below
+		// is created - otherwise, with lagSmoothing disabled for Lenis (see
+		// gsap.ticker.lagSmoothing(0) above), a stale ticker timestamp can
+		// make the tween's very first tick jump most of the way to
+		// completion instead of animating smoothly.
+		requestAnimationFrame(() => {
+			const crossfade = { alpha: 0 };
+			gsap.to(crossfade, {
+				alpha: 1,
+				duration: 0.5,
+				ease: 'power2.inOut',
+				onUpdate: () => {
+					ctx.clearRect(0, 0, canvas.width, canvas.height);
+					ctx.drawImage(frozen, 0, 0);
+					ctx.globalAlpha = crossfade.alpha;
+					ctx.drawImage(finalFrame, 0, 0);
+					ctx.globalAlpha = 1;
+				},
+				onComplete: () => {
+					// Loading page transition animation
+					const loadingTL = gsap.timeline();
+					loadingTL.to('.loading-screen-bg', {
+						opacity:0, ease:'power1.in', duration:.8
+					})
+					.to('#loading-screen', {
+						yPercent:-100,
+						ease:'power3.inOut',
+						duration:1
+					}).from('.split .char', {
+						yPercent:100,
+						ease: 'power1.inOut',
+						duration:1,
+						stagger:.001
+					})
+
+					//Start threejs animation loops
+					animate();
+				}
+			});
+		});
+	});
   };
 
 // Renderer setup
@@ -145,6 +203,19 @@ function animate() {
 
 }
 
+// Extra "dead air" held in the scroll-scrubbed landing timeline right after a
+// chapter's text reveal, before the scene resumes transforming - gives the
+// reader scroll room so a fast scroll doesn't blow straight past newly
+// revealed text. Expressed in the same position-units used throughout
+// landingSceneTimeline (e.g. 1 == one original phase's width); bump this to
+// give chapters more or less breathing room. The original phases ran at
+// roughly innerHeight/3 px per unit (6ish units over the 2-viewport pin
+// below), so that same rate is used here to pad the pin's scroll distance to
+// match - otherwise the extra unit would just be squeezed out of the other
+// phases' existing scroll budget instead of adding real room.
+const CHAPTER_STOPPAGE = 1.5;
+const CHAPTER_STOPPAGE_PX_PER_UNIT = 1 / 3;
+
 // Timeline for events in the landing section
 const landingSceneTimeline = gsap.timeline({
 	scrollTrigger: {
@@ -156,9 +227,11 @@ const landingSceneTimeline = gsap.timeline({
 		// viewport-height of room here gives the new wall-reveal/break sequence
 		// a full extra viewport's worth of scroll to play out in, while the
 		// total timeline duration also doubles below (4 units -> 8), so the
-		// original 4 phases keep their original px-per-unit scroll pace.
-		// Recomputed on resize since it reads window.innerHeight.
-		end: () => '+=' + (window.innerHeight * 2),
+		// original 4 phases keep their original px-per-unit scroll pace. A
+		// further CHAPTER_STOPPAGE-driven pad is added on top so the chapter
+		// reveal below gets genuine extra scroll room, not room borrowed from
+		// later phases. Recomputed on resize since it reads window.innerHeight.
+		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * CHAPTER_STOPPAGE),
 		invalidateOnRefresh: true,
 		scrub: 1, // lower scrub means the camera reacts more directly to scrolling
 		markers: false
@@ -196,13 +269,17 @@ function resizeToDisplaySize() {
 }
 
 // onload function
-// The landing timeline is split into 4 equal-length quarters via explicit
-// start-time positions (0, 1, 2, 3), so each scroll quarter drives one phase:
+// The landing timeline is split into equal-length quarters via explicit
+// start-time positions, so each scroll quarter drives one phase:
 //   0-1  Phase 1: idle - free mouse-driven look (LandingScene.update() default)
-//   1-2  Phase 2: camera dives from z:1500 to z:0 and tilts to look down
-//   2-3  Phase 3: sun swings low, camera flattens toward orthographic, the
-//        vertical boxes slide out of frame, the horizontal box collapses away
-//   3-4  Phase 4: the floor morphs into a small sphere
+//   1-2  Phase 2: camera dives from z:1500 to z:0 and tilts to look down.
+//        Chapter two's text swap triggers partway through, at 1.7.
+//   PHASE3_START (2 + CHAPTER_STOPPAGE) to +1:
+//        Phase 3: sun swings low, camera flattens toward orthographic, the
+//        vertical boxes slide out of frame, the horizontal box collapses
+//        away. Held back past the original position 2 by CHAPTER_STOPPAGE so
+//        the chapter reveal above has scroll room to finish before this starts.
+//   PHASE3_START + 1 to +2: Phase 4: the floor morphs into a small sphere
 function onload(){
 
 	// Phase 2
@@ -212,27 +289,85 @@ function onload(){
 		duration: 1,
 	}, 1);
 
-	// Phase 3
+	// Chapter two's text swap fires at this timeline position - before z:0
+	// lands at 2 and well before Phase 3 (pushed out to PHASE3_START below)
+	// starts moving box4, so the reveal is fully resolved before anything
+	// else in the scene moves.
+	const CHAPTER_TWO_TRIGGER = 1.7;
+
+	// Chapter one fades out gradually as the user scrolls through the dive -
+	// scrubbed (tied to scroll position, like the rest of Phase 2) rather
+	// than trigger-based, so it reads as a slow dissolve tracking the scroll
+	// itself, fully gone right as CHAPTER_TWO_TRIGGER fires below.
+	landingSceneTimeline.to('.landing-scene-description', {
+		autoAlpha: 0,
+		ease: 'power1.inOut',
+		duration: CHAPTER_TWO_TRIGGER - 1,
+	}, 1);
+
+	// Chapter two slides in with the same char-stagger treatment as the
+	// landing page-load intro (yPercent 100 -> 0, power1.inOut, stagger
+	// .001), just slower. This runs as its own paused, fixed-duration
+	// timeline rather than living inside the scrubbed landingSceneTimeline,
+	// so the reveal always takes the same real time regardless of how fast
+	// the user scrolls - .play()/.reverse() below just fire it, they don't
+	// scrub it frame-by-frame with scroll position.
+	const chapterTwoTimeline = gsap.timeline({ paused: true })
+		.to('.chapter-two-description', { autoAlpha: 1, ease: 'power1.inOut', duration: 1 }, 0)
+		.to('.split-reveal .char', { yPercent: 0, ease: 'power1.inOut', duration: 1, stagger: .001 }, 0);
+
+	// Scrolling back doesn't reverse the slide-in (chars sliding back down
+	// would still be mid-animation by the time chapter one's scrubbed
+	// fade-back-in catches up, since that one snaps in almost instantly on a
+	// fast scroll-back). Instead it's just a quick opacity fade-out - once
+	// that's done and invisible, the chars are silently reset to their
+	// hidden yPercent:100 starting position (pause(0) rewinds the whole
+	// reveal timeline) so the next forward trigger slides them in fresh.
+	const CHAPTER_TWO_HIDE_DURATION = .2;
+
+	// Fires once as the scrub crosses CHAPTER_TWO_TRIGGER in either direction
+	// (GSAP timelines process crossed callbacks correctly even when scrub
+	// jumps straight over them on a fast scroll) - triggers the reveal/hide
+	// above rather than scrubbing it.
+	landingSceneTimeline.call(() => {
+		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			chapterTwoTimeline.play();
+		} else {
+			chapterTwoTimeline.pause();
+			gsap.to('.chapter-two-description', {
+				autoAlpha: 0,
+				ease: 'power1.in',
+				duration: CHAPTER_TWO_HIDE_DURATION,
+				onComplete: () => chapterTwoTimeline.pause(0),
+			});
+		}
+	}, null, CHAPTER_TWO_TRIGGER);
+
+	// Phase 3 - held back by CHAPTER_STOPPAGE past where it originally started
+	// (position 2, i.e. right when the Phase 2 dive above lands on z:0) so the
+	// chapter reveal has scroll room to breathe before the scene continues.
+	const PHASE3_START = 2 + CHAPTER_STOPPAGE;
+
 	landingSceneTimeline.to(activeScene.directionalLight.position, {
 		x: 0,
 		y:400,
 		ease: 'power3.inOut',
 		duration: 1,
-	}, 2);
+	}, PHASE3_START);
 
 	landingSceneTimeline.to(landingScene.camera, {
 		fov: 12, // low FOV flattens perspective toward an orthographic look
 		ease: 'power3.inOut',
 		duration: 1,
 		onUpdate: () => landingScene.camera.updateProjectionMatrix(),
-	}, 3);
+	}, PHASE3_START + 1);
 
 	landingSceneTimeline.to(landingScene.verticalBoxes.map(box => box.position), {
 		x: (i, target) => target.x + 125 * (i + 1), // box1 +300, box2 +600, box3 +900
 		z:1200,
 		ease: 'power3.out',
 		duration: 1,
-	}, 2);
+	}, PHASE3_START);
 
 	landingSceneTimeline.to(landingScene.box4.scale, {
 		x: 0,
@@ -240,7 +375,7 @@ function onload(){
 		z: 0,
 		ease: 'power3.out',
 		duration: .5,
-	}, 2);
+	}, PHASE3_START);
 
 	// Phase 4
 	const floorMorph = { t: 0 };
@@ -277,7 +412,7 @@ function onload(){
 				landingScene.verticalBoxes.forEach(box => { box.castShadow = !shouldHide; });
 			}
 		},
-	}, 3);
+	}, PHASE3_START + 1);
 
 	// Same window as the morph above, so the floor reddens exactly as it
 	// rounds into a sphere rather than before or after.
@@ -288,7 +423,41 @@ function onload(){
 		b: signalRed.b,
 		ease: 'power3.inOut',
 		duration: 1,
-	}, 3);
+	}, PHASE3_START + 1);
+
+	// Chapter two fades out over the same scrubbed window as the sphere morph
+	// above, so "Perspective" dissolves in step with the floor rounding into a
+	// sphere and is fully gone right as CHAPTER_THREE_TRIGGER fires below -
+	// mirroring how chapter one fades out ahead of CHAPTER_TWO_TRIGGER.
+	landingSceneTimeline.to('.chapter-two-description', {
+		autoAlpha: 0,
+		ease: 'power1.inOut',
+		duration: 1,
+	}, PHASE3_START + 1);
+
+	// Chapter three appears right as the floor finishes morphing into a
+	// sphere (the morph tween above ends at PHASE3_START + 2).
+	const CHAPTER_THREE_TRIGGER = PHASE3_START + 2;
+
+	const chapterThreeTimeline = gsap.timeline({ paused: true })
+		.to('.chapter-three-description', { autoAlpha: 1, ease: 'power1.inOut', duration: 1 }, 0)
+		.to('.split-reveal-three .char', { yPercent: 0, ease: 'power1.inOut', duration: 1, stagger: .001 }, 0);
+
+	const CHAPTER_THREE_HIDE_DURATION = .2;
+
+	landingSceneTimeline.call(() => {
+		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			chapterThreeTimeline.play();
+		} else {
+			chapterThreeTimeline.pause();
+			gsap.to('.chapter-three-description', {
+				autoAlpha: 0,
+				ease: 'power1.in',
+				duration: CHAPTER_THREE_HIDE_DURATION,
+				onComplete: () => chapterThreeTimeline.pause(0),
+			});
+		}
+	}, null, CHAPTER_THREE_TRIGGER);
 
 	// Phase 6 (5-8): the sphere rolls right but stops short of the third wall
 	// (per the reference image, the ball never reaches it, so it stays whole).
@@ -298,7 +467,7 @@ function onload(){
 	// collision check, but since scrub timelines are just deterministic
 	// position->progress mappings, lining the two up by math reads as a real
 	// hit and stays scrubbable (and reversible) in both scroll directions.
-	const sphereMoveStart = 5;
+	const sphereMoveStart = PHASE3_START + 3;
 	const sphereMoveDuration = 1;
 	const sphereTravelDistance = 260; // stops between wall 2 (220) and wall 3 (320) - wall 3 never gets hit
 	landingSceneTimeline.to(landingScene.floor.position, {

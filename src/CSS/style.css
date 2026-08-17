@@ -38,7 +38,49 @@ body {
   flex-direction: column;
   position: absolute;
   align-items: center;
-  mix-blend-mode:multiply;
+  gap: 1.1rem;
+}
+
+/* Multiply lets the gif's white background blend away into whatever sits
+   behind it (the card below) instead of showing as an opaque white box -
+   only its black linework stays put regardless of backdrop. */
+#loadingHeadGif {
+  width: clamp(120px, 20vw, 512px);
+  height: clamp(120px, 20vw, 512px);
+  mix-blend-mode: multiply;
+  position: relative;
+  z-index: 1;
+}
+
+/* Card behind the gif - a simple hand-cut quadrilateral, four corners at
+   deliberately uneven heights/insets (a rotated, hand-cut card, not a
+   symmetric shape), each side broken into two edges by one gently bulging
+   midpoint rather than a single straight line. Same brick accent used
+   everywhere else on the page, with the site's standard grain texture
+   standing in for paper fiber. */
+.loading-screen-card {
+  position: relative;
+  display: inline-flex;
+  padding: 15%;
+  background-color: #bd4a30;
+  clip-path: polygon(
+    4% 9%, 48% 0%,
+    96% 2%, 100% 45%,
+    100% 88%, 52% 100%,
+    9% 100%, 0% 50%
+  );
+  overflow: hidden;
+}
+
+.loading-screen-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url(/textures/noise512.png);
+  background-size: 220px;
+  opacity: 0.5;
+  mix-blend-mode: overlay;
+  pointer-events: none;
 }
 
 .loading-screen-bg-texture {
@@ -48,16 +90,33 @@ body {
   background-image:
   url(/textures/grid.jpg);
   background-repeat: repeat;
-  background-size: auto; 
-  opacity: .6;
+  background-size: auto;
+  opacity: .35;
   mix-blend-mode:overlay;
 }
 
+/* Same small-caps chrome language as the nav links, meta bar, and chapter
+   numbers, instead of a one-off oversized serif caption. */
 .loading-screen-bg-text {
-  font-size: 2rem;
-  color: black;
-  font-family: "Neue Haas Grotesk";
-  font-style: italic;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-family: 'Neue Haas Grotesk';
+  color: #2a2018;
+  opacity: 1;
+}
+
+/* Mirrors .chapter-number::before - the same brick tick used to mark every
+   chapter heading, so the loading screen reads as part of the same system. */
+.loading-screen-bg-text::before {
+  content: '';
+  width: 16px;
+  height: 1px;
+  background: #bd4a30;
 }
 
 /* Site header */
@@ -274,7 +333,10 @@ body {
 .landing-scene-description-left h1.split {
   font-size: clamp(2.8rem, 1.2rem + 5.8vw, 6.4rem);
   font-weight: 400;
-  line-height: 0.98;
+  /* The .word spans SplitType wraps each word in are the reveal-stagger
+     mask (overflow: hidden, per .word below) - anything tighter than
+     this clips descenders like the "g" in "Reasoning". */
+  line-height: 1.15;
   letter-spacing: -0.01em;
   color: #bd4a30;
   margin: 0 0 0.5em;
@@ -292,57 +354,6 @@ body {
   flex: 1;
 }
 
-/* Oversized outlined folio number, mid-century catalog/exhibition-plate
-   convention - stamped into the empty corner and cropped by the frame,
-   like a plate number cut off by the edge of the page, rather than
-   floating center-stage where it competed with the 3D piece. */
-.landing-scene-index-mark {
-  position: absolute;
-  right: 4vw;
-  bottom: 9vh;
-  z-index: 2;
-  font-family: 'Ivar Display';
-  font-size: clamp(5rem, 2.5rem + 7vw, 10rem);
-  line-height: 1;
-  color: transparent;
-  -webkit-text-stroke: 1px rgba(42, 32, 24, 0.18);
-  pointer-events: none;
-  user-select: none;
-}
-
-/* Print registration-mark corners: frames the hero like a designed plate
-   rather than a floating text block. Bottom corners only, so they never
-   compete with the fixed site header along the top edge. */
-.landing-scene-corner {
-  position: absolute;
-  bottom: 24px;
-  width: 14px;
-  height: 14px;
-  z-index: 2;
-  pointer-events: none;
-}
-.landing-scene-corner::before,
-.landing-scene-corner::after {
-  content: '';
-  position: absolute;
-  background: rgba(42, 32, 24, 0.35);
-}
-.landing-scene-corner::before {
-  top: 50%;
-  left: 0;
-  width: 100%;
-  height: 1px;
-  transform: translateY(-50%);
-}
-.landing-scene-corner::after {
-  left: 50%;
-  top: 0;
-  height: 100%;
-  width: 1px;
-  transform: translateX(-50%);
-}
-.landing-scene-corner-bl { left: 24px; }
-.landing-scene-corner-br { right: 24px; }
 
 .landing-scene-meta {
   position: absolute;
@@ -424,13 +435,9 @@ body {
     display: none;
   }
 
-  /* The oversized folio watermark and the studio signature only have room
-     to breathe against the wide desktop composition - both drop out here
-     rather than fight the single centered text column for attention. */
-  .landing-scene-index-mark {
-    display: none;
-  }
-
+  /* The studio signature only has room to breathe against the wide desktop
+     composition - it drops out here rather than fight the single centered
+     text column for attention. */
   .landing-scene-meta-left {
     display: none;
   }
@@ -466,22 +473,154 @@ body {
   mix-blend-mode:overlay;
 }
 
+/* Chapter two overlay: sits in the same spot as the chapter-one text, hidden
+   (opacity:0 in CSS, so nothing flashes before JS runs) until the scroll
+   timeline reveals it in main.js at the exact moment the Phase 2 camera dive
+   reaches z:0 - see the landingSceneTimeline .to() calls targeting
+   '.chapter-two-description' and '.split-reveal .char'. */
+.chapter-two-description {
+  box-sizing: border-box;
+  width: 100vw;
+  padding-left: 5vw;
+  padding-top: 7rem;
+  z-index: 2;
+  font-size: clamp(1rem, 0.82rem + 0.9vw, 1.5rem);
+  font-family: 'Ivar Display';
+  color: #2a2018;
+  position: absolute;
+  opacity: 0;
+}
+
+.chapter-two-description-left {
+  width: 40%;
+  min-width: 320px;
+  max-width: 760px;
+  text-align: left;
+}
+
+.chapter-two-description-left h1.split-reveal {
+  font-size: clamp(2.8rem, 1.2rem + 5.8vw, 6.4rem);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: #bd4a30;
+  margin: 0 0 0.5em;
+}
+
+.chapter-two-description-left h3.split-reveal {
+  font-size: clamp(1rem, 0.9rem + 0.4vw, 1.2rem);
+  font-weight: 400;
+  line-height: 1.6;
+  max-width: 34ch;
+  opacity: 0.82;
+}
+
+@media (max-width: 767px), (max-height: 500px) {
+  .chapter-two-description {
+    padding-left: 0;
+    padding-top: calc(7rem + 6vh);
+    display: flex;
+    justify-content: center;
+  }
+
+  .chapter-two-description-left {
+    width: 88vw;
+    min-width: 0;
+    max-width: 480px;
+    text-align: left;
+  }
+}
+
+@media (max-height: 500px) {
+  .chapter-two-description {
+    font-size: clamp(0.85rem, 0.55rem + 2.6vh, 1.05rem);
+  }
+}
+
+/* Chapter three overlay: same treatment as chapter two, revealed in main.js
+   right as the floor finishes morphing into a sphere - see the
+   landingSceneTimeline .call() targeting CHAPTER_THREE_TRIGGER. */
+.chapter-three-description {
+  box-sizing: border-box;
+  width: 100vw;
+  padding-left: 5vw;
+  padding-top: 7rem;
+  z-index: 2;
+  font-size: clamp(1rem, 0.82rem + 0.9vw, 1.5rem);
+  font-family: 'Ivar Display';
+  color: #2a2018;
+  position: absolute;
+  opacity: 0;
+}
+
+.chapter-three-description-left {
+  width: 40%;
+  min-width: 320px;
+  max-width: 760px;
+  text-align: left;
+}
+
+.chapter-three-description-left h1.split-reveal-three {
+  font-size: clamp(2.8rem, 1.2rem + 5.8vw, 6.4rem);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: #bd4a30;
+  margin: 0 0 0.5em;
+}
+
+.chapter-three-description-left h3.split-reveal-three {
+  font-size: clamp(1rem, 0.9rem + 0.4vw, 1.2rem);
+  font-weight: 400;
+  line-height: 1.6;
+  max-width: 34ch;
+  opacity: 0.82;
+}
+
+@media (max-width: 767px), (max-height: 500px) {
+  .chapter-three-description {
+    padding-left: 0;
+    padding-top: calc(7rem + 6vh);
+    display: flex;
+    justify-content: center;
+  }
+
+  .chapter-three-description-left {
+    width: 88vw;
+    min-width: 0;
+    max-width: 480px;
+    text-align: left;
+  }
+}
+
+@media (max-height: 500px) {
+  .chapter-three-description {
+    font-size: clamp(0.85rem, 0.55rem + 2.6vh, 1.05rem);
+  }
+}
+
 .chapter-number {
   display: inline-flex;
   align-items: center;
-  gap: 0.6rem;
-  font-size: .7rem;
+  gap: 0.5rem;
+  font-size: .58rem;
   font-weight: 500;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   font-family: 'Neue Haas Grotesk';
-  margin: 0 0 1.75rem;
+  margin: 0 0 1.5rem;
 }
 .chapter-number::before {
   content: '';
-  width: 28px;
+  width: 16px;
   height: 1px;
   background: #bd4a30;
+}
+.chapter-number-sub {
+  margin-left: 0.4rem;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  opacity: 0.5;
 }
 
 .word {overflow: hidden;}

@@ -35,6 +35,13 @@ export default class LandingScene extends BaseThreeJS{
     this.mouseX = 0;
     this.mouseY = 0;
     this.camera.fov = this.getResponsiveFov(this.camera.aspect);
+    // Drives the mobile-only Phase 6 layout swap (see createSplitWall/main.js):
+    // on a portrait screen the wall-break sequence runs top-to-bottom instead
+    // of left-to-right, since portrait framing has almost no horizontal room
+    // to roll a sphere across but plenty of vertical scroll room to drop it
+    // through. Read once at construction (aspect doesn't change often enough
+    // mid-session to warrant recomputing it on resize).
+    this.isPortrait = this.camera.aspect < 1;
     this.floor = null;
     this.composer = null;
 		this.windowHalfX = window.innerWidth / 2;
@@ -220,16 +227,31 @@ export default class LandingScene extends BaseThreeJS{
     
     
     // Three break-able walls for the post-sphere sequence: the ball rolls
-    // right and cracks them open one at a time, Teorema-poster style. Each
-    // wall is built as two stacked halves sharing one invisible seam rather
-    // than a single mesh, so "breaking" is just kicking the two halves apart
-    // - no runtime geometry slicing needed. Spacing is small (100 apart, not
-    // the 400-1200 range other props use) because by this point in the
-    // timeline the camera sits close to the origin with fov:12 - the visible
-    // frame at that distance only spans roughly +-350 world units, not the
-    // thousands the earlier phases operate at. Spaced along +x, the direction
-    // the sphere will travel, so they're hit in this array's order.
-    this.walls = [250, 350, 450].map((x) => this.createSplitWall(boxMaterial, x));
+    // right (or, on portrait screens, drops down - see createSplitWall) and
+    // cracks them open one at a time, Teorema-poster style. Each wall is
+    // built as two stacked halves sharing one invisible seam rather than a
+    // single mesh, so "breaking" is just kicking the two halves apart - no
+    // runtime geometry slicing needed. Spacing is small (100 apart on
+    // desktop, not the 400-1200 range other props use) because by this point
+    // in the timeline the camera sits close to the origin with fov:12 - the
+    // visible frame at that distance only spans roughly +-350 world units on
+    // a 16:9 desktop, not the thousands the earlier phases operate at.
+    //
+    // Portrait uses a much tighter 60/110/160 spacing instead of just
+    // reusing the desktop numbers on the rotated axis, for two reasons:
+    // fov:12 is the *vertical* FOV and applies unchanged regardless of
+    // aspect, so the vertical frame at this camera distance is only
+    // ~+-170 world units - the desktop spacing (up to 450) would place
+    // every wall below the bottom edge, off-screen, for the entire
+    // sequence. And each wall's on-screen-vertical thickness here is a
+    // fixed 40 world units (BoxGeometry's 100 * group.scale's 0.4) -
+    // packing them closer than that (e.g. the first attempt's 90/125/160,
+    // 35 apart) makes adjacent bars overlap into one solid mass instead of
+    // three distinct lines, which read as a single dark band.
+    // Spaced along the direction the sphere will travel, so they're hit in
+    // this array's order.
+    const wallCoords = this.isPortrait ? [60, 110, 160] : [250, 350, 450];
+    this.walls = wallCoords.map((x) => this.createSplitWall(boxMaterial, x));
     this.horizontalBoxes = [this.box1, this.box2, this.box3];
 
 
@@ -341,19 +363,31 @@ export default class LandingScene extends BaseThreeJS{
   // puts the bar's long axis on world Z rather than Y - by the time this
   // wall matters (post floor-morph), the camera's up vector has already
   // flipped to (0,0,-1) (see update()'s tiltAngle), so world Z is what
-  // actually reads as "vertical" on screen. Present at full scale from the
-  // start (visible underneath/behind the boxes and floor in earlier phases,
-  // same as the reference image already has them standing there) - breaking
-  // a wall later is just tweening topHalf/bottomHalf apart, no runtime
-  // geometry slicing required.
+  // actually reads as "vertical" on screen, and the walls spaced along world
+  // X (the `x` param) read as vertical bars laid out left-to-right, which is
+  // what the sphere then rolls into.
+  //
+  // On portrait screens that's flipped: rotateZ(PI/2) instead puts the bar's
+  // long axis on world X (reads as a horizontal bar), and `x` is placed on
+  // world Z instead of world X - so the bars stack top-to-bottom on screen
+  // and the sphere drops through them via floor.position.z instead of
+  // rolling into them via floor.position.x (see main.js's Phase 6). Portrait
+  // has almost no horizontal frame to roll a ball across, but plenty of
+  // vertical scroll room, so this reads as the same beat instead of the
+  // ball just running out of frame.
   createSplitWall(material, x, z = 0, y = -100) {
     const halfGeom = new THREE.BoxGeometry(100, 500, 100);
     const wallMaterial = material.clone();
     wallMaterial.uniforms.uBaseColor.value.set(PALETTE.ink);
 
     const group = new THREE.Group();
-    group.position.set(x, y, z);
-    group.rotation.x = Math.PI / 2;
+    if (this.isPortrait) {
+      group.position.set(z, y, x);
+      group.rotation.z = Math.PI / 2;
+    } else {
+      group.position.set(x, y, z);
+      group.rotation.x = Math.PI / 2;
+    }
     group.scale.set(0.4, 1, 0.4);
     this.scene.add(group);
 

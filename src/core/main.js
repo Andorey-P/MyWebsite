@@ -469,10 +469,16 @@ function onload(){
 	// hit and stays scrubbable (and reversible) in both scroll directions.
 	const sphereMoveStart = PHASE3_START + 3;
 	const sphereMoveDuration = 1;
-	const sphereTravelDistance = 260; // stops between wall 2 (220) and wall 3 (320) - wall 3 never gets hit
+	// Portrait screens have almost no horizontal frame to roll the sphere
+	// across (see LandingScene.createSplitWall), so the walls are laid out
+	// along world Z there instead of world X, and the sphere drops through
+	// them via floor.position.z instead of rolling into them via .x - over a
+	// much shorter distance, matching the tighter portrait wall spacing.
+	const rollAxis = landingScene.isPortrait ? 'z' : 'x';
+	const sphereTravelDistance = landingScene.isPortrait ? 65 : 260; // stops just past wall 1, short of wall 2
 	landingSceneTimeline.to(landingScene.floor.position, {
-		x: sphereTravelDistance,
-		ease: 'none', // linear, so the wall-x -> timeline-time math below stays accurate
+		[rollAxis]: sphereTravelDistance,
+		ease: 'none', // linear, so the wall-position -> timeline-time math below stays accurate
 		duration: sphereMoveDuration,
 	}, sphereMoveStart);
 
@@ -484,7 +490,7 @@ function onload(){
 		const severity = breakSeverity[i];
 		if (!severity) return; // third wall: sphere doesn't reach it, leave it standing
 
-		const hitTime = sphereMoveStart + (wall.group.position.x / sphereTravelDistance) * sphereMoveDuration - .8;
+		const hitTime = sphereMoveStart + (wall.group.position[rollAxis] / sphereTravelDistance) * sphereMoveDuration - .8;
 
 		landingSceneTimeline.to(wall.topHalf.position, {
 			y: `+=${220 * severity}`,

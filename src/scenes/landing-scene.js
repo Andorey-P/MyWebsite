@@ -27,6 +27,12 @@ const MAX_FOV = 65;
 // establishing shot doesn't read as mostly floor - tune to taste.
 const TARGET_Y_FINAL = 2500;
 const TARGET_Y_FINAL_PORTRAIT = 1700;
+// Each split-wall half's height (see createSplitWall's halfGeom) - also
+// chapter four's shared "cube module" size: the third wall's halves grow to
+// this in width/depth too (so each half reads as an actual cube), the hero
+// cube grows to match it, and the hidden grid's tiles are cut to the same
+// size, per main.js's chapter four choreography.
+const WALL_HALF_HEIGHT = 500;
 
 export default class LandingScene extends BaseThreeJS{
   constructor(containerId, loadingManager, renderer){
@@ -47,6 +53,11 @@ export default class LandingScene extends BaseThreeJS{
 		this.windowHalfX = window.innerWidth / 2;
 		this.windowHalfY = window.innerHeight / 2;
     this.lookAtTarget = new THREE.Vector3(0, 0, 0);
+    // When true, update()'s mouse-driven idle look is skipped entirely so a
+    // scroll-timeline tween (e.g. chapter four's camera orbit in main.js) can
+    // drive camera.position/up directly without update() lerping it back
+    // toward the idle target every frame right behind it.
+    this.lockIdleLook = false;
     this.onDocumentMouseMove = this.onDocumentMouseMove.bind(this);
     document.addEventListener( 'mousemove', this.onDocumentMouseMove );
 
@@ -107,6 +118,42 @@ export default class LandingScene extends BaseThreeJS{
     this.floorMorphAmount = 0;
     this.floorOriginalPositions = Float32Array.from(planeGeometry.attributes.position.array);
     this.floorSpherePositions = this.computeFloorSphereTargets(this.floorOriginalPositions, 25);
+
+    // Chapter four's "sphere morphs into a cube" beat is one continuously-
+    // deforming mesh, not two objects crossfading (a separate sphere shrinking
+    // as an unrelated cube grew read as two things, not one thing changing
+    // shape). Built from a subdivided BoxGeometry - its topology is already a
+    // clean, regular cube grid, so normalizing each vertex's direction from
+    // center and scaling it out to morphSphereRadius turns that same grid
+    // into a sphere. Lerping between "original box position" and that
+    // normalized-and-scaled position morphs cleanly between an exact sphere
+    // and an exact cube using the same vertices throughout, with no seams or
+    // uneven density. (A per-vertex projection of the *floor's* sphere wrap
+    // onto a cube was tried first, reusing that mesh directly - but that
+    // wrap's density is tuned for a smooth round shape wrapped from a flat
+    // plane, dense near the plane's center and sparse toward its edges, and
+    // projecting that onto a cube's flat faces put a visible zigzag where the
+    // uneven sampling crossed each face boundary. Starting from a mesh whose
+    // topology is already a cube's own grid avoids that entirely.)
+    const morphSegments = 12;
+    const cubeSize = 40;
+    // Exposed so main.js can size chapter four's further "grow past base
+    // size" tween relative to this, instead of hardcoding a second number
+    // that has to be kept in sync with this one by hand.
+    this.cubeBaseSize = cubeSize;
+    // Matches computeFloorSphereTargets' own radius exactly, so the instant
+    // this mesh swaps in for the floor (see revealMorphCube) it's already the
+    // same size/shape as what it's replacing - no crossfade animation needed,
+    // just a visibility swap.
+    const morphSphereRadius = 25;
+    const morphGeometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize, morphSegments, morphSegments, morphSegments);
+    this.morphCubePositions = Float32Array.from(morphGeometry.attributes.position.array);
+    this.morphSpherePositions = this.computeNormalizedSphereTargets(this.morphCubePositions, morphSphereRadius);
+    const cubeMaterial = new THREE.MeshStandardMaterial({ color: PALETTE.signalRed, roughness: 0.85 });
+    this.cube = new THREE.Mesh(morphGeometry, cubeMaterial);
+    this.cube.visible = false;
+    this.cube.castShadow = true;
+    this.scene.add(this.cube);
 
 
 
@@ -254,24 +301,112 @@ export default class LandingScene extends BaseThreeJS{
     this.walls = wallCoords.map((x) => this.createSplitWall(boxMaterial, x));
     this.horizontalBoxes = [this.box1, this.box2, this.box3];
 
+    // Chapter four's final beat: a field of dark cube "tiles" behind the
+    // third (never-hit) wall, sharing that wall's own rotation and local
+    // coordinate frame (see createSplitWall) - columns across its local X
+    // (width), rows up its local Y (height, the same axis its topHalf/
+    // bottomHalf are stacked on), offset back along its local Z (depth).
+    // Genuinely hidden behind wall three's own bulk at start - no artificial
+    // reveal-from-scale-0 needed - because it starts at that same small
+    // scale (see main.js, which grows both together) and sits behind it in
+    // actual 3D space; it only becomes visible once the chapter four orbit
+    // changes the viewing angle enough to see past wall three's edge. One
+    // InstancedMesh instead of one mesh per tile, since this is dozens of
+    // identical cubes sharing a material - a single draw call, not dozens.
+    this.cubeModuleSize = WALL_HALF_HEIGHT;
+    // Base tile size matches the wall halves' own pre-scale width/depth (see
+    // createSplitWall's halfGeom) - main.js grows this mesh's scale in
+    // lockstep with wall three's own group.scale, so a tile ends up exactly
+    // cubeModuleSize once wall three has fully grown into a cube (100 * the
+    // same scale factor wall three reaches = cubeModuleSize).
+    const gridTileSize = 100;
+    // Center-to-center spacing between tiles - wider than gridTileSize so a
+    // visible gap separates each cube from its neighbors (a paper-color sliver
+    // showing through), reading as a checkerboard of distinct tiles rather
+    // than one solid slab of touching boxes. In the same pre-scale units as
+    // gridTileSize, so the gap stays proportional as the whole mesh grows.
+    const gridSpacing = gridTileSize * 1.4;
+    const gridColumns = 6; // across, matching the wall's own width axis
+    const gridRows = 7; // up, matching the wall's own height axis
+    const gridGeometry = new THREE.BoxGeometry(gridTileSize, gridTileSize, gridTileSize);
+    const gridMaterial = new THREE.MeshStandardMaterial({ color: PALETTE.ink, roughness: 0.85 });
+    this.hiddenGrid = new THREE.InstancedMesh(gridGeometry, gridMaterial, gridColumns * gridRows);
+    // Stays hidden until the floor finishes morphing into a sphere (see
+    // main.js's floorMorph tween) - revealing it only then, rather than at
+    // construction, keeps it out of the frame for the earlier chapters it
+    // has no part in.
+    this.hiddenGrid.visible = false;
+    this.hiddenGrid.castShadow = true;
+    this.hiddenGrid.receiveShadow = true;
+    this.hiddenGrid.position.copy(this.walls[2].group.position);
+    // Uniform scale (not wall three's own (0.4, 1, 0.4) group.scale) so each
+    // tile renders as an actual cube matching the hero cube's size exactly,
+    // rather than a 40x100x40 slab stretched along wall three's height axis.
+    const gridToCubeScale = this.cubeBaseSize / gridTileSize;
+    this.hiddenGrid.scale.set(gridToCubeScale, gridToCubeScale, gridToCubeScale);
+    // Exposed so main.js can shrink the wall halves' width/depth to this same
+    // ratio in chapter four - true on desktop already (createSplitWall's
+    // rest scale is (0.4, 1, 0.4), and 0.4 is exactly this ratio), but
+    // portrait's own rest scale is (0.4, 1, 0.25) - tuned for how a whole
+    // wall reads on a narrow screen, not for the width/depth match a cube
+    // tile needs, so portrait's halves need their X/Z scale actually moved
+    // to this value in chapter four rather than assumed already-there.
+    this.gridToCubeScale = gridToCubeScale;
+    // World-space center-to-center tile spacing, exposed so main.js can line
+    // up wall three's halves and the hero cube with this same rhythm (see
+    // chapter four's wall3OpenGap, which spaces them apart by exactly this
+    // much so they read as the grid's own next row/column instead of a
+    // separately-scaled cluster).
+    this.gridWorldSpacing = gridSpacing * gridToCubeScale;
+    if (this.isPortrait) {
+      this.hiddenGrid.rotation.x = Math.PI / 2;
+      this.hiddenGrid.rotation.z = Math.PI / 2;
+    } else {
+      this.hiddenGrid.rotation.x = Math.PI / 2;
+    }
+
+    // Shifts the grid over from wall three's own column axis so wall three's
+    // own column - formed later by its topHalf/cube-gap/bottomHalf once
+    // chapter four opens it up (see main.js) - lands exactly one more
+    // gridWorldSpacing beyond the grid's own nearest column, continuing the
+    // same column rhythm rather than sitting close to but not quite aligned
+    // with it. Rows need no such offset either way, since gridRows was
+    // chosen so its middle three rows already coincide exactly with wall
+    // three's bottomHalf/cube/topHalf positions.
+    //
+    // Which world axis is "columns" vs "rows" flips with the rotation above:
+    // desktop's rotation.x alone lands columns (loop's local X) on world X
+    // and rows (local Y) on world Z. Portrait's extra rotation.z - needed so
+    // the grid stays flat on world Y (matching wall three's own Y, and the
+    // idle camera's top-down look) instead of standing up facing world Z
+    // edge-on to that camera - swaps that pairing: rows land on world X
+    // (matching wall three's own rotation.z, the same axis its
+    // topHalf/bottomHalf split on), columns land on world Z.
+    const gridDepthOffset = this.gridWorldSpacing * (1 + (gridColumns - 1) / 2);
+    if (this.isPortrait) {
+      this.hiddenGrid.position.z += gridDepthOffset;
+    } else {
+      this.hiddenGrid.position.x += gridDepthOffset;
+    }
 
 
-    // Create a cone geometry and apply the grid material
-    const coneGeom = new THREE.ConeGeometry( 30, 75, 32 );
-    const cone = new THREE.Mesh( coneGeom, createGridMaterial({color: '#fff5de',lineWidth: 0.012, roughness:0.0, tileY:10, lineColor: new THREE.Color(0x000000)}) );
-    cone.position.set(-200, 75, 800);
-    cone.scale.set(2, 2, 2); // Adjust the scale as needed
-    // this.scene.add( cone );
-    cone.castShadow = true;
-
-    // create a torus geometry and apply the grid material
-    const torusGeom = new THREE.TorusGeometry( 50, 20, 32, 100 );
-    const torus = new THREE.Mesh( torusGeom, createGridMaterial({color: '#fff5de',lineWidth: 0.001, roughness:0.6, tileY:30 ,tileX:30, lineColor: new THREE.Color(0x000000)}) );
-    torus.position.set(200, 30, 900);
-    torus.scale.set(1.5, 1.5, 1.5);
-    torus.rotation.x = Math.PI / 2; // Rotate the torus to stand upright
-    // this.scene.add( torus );
-    torus.castShadow = true; 
+    const instanceMatrix = new THREE.Matrix4();
+    const instancePosition = new THREE.Vector3();
+    let instanceIndex = 0;
+    for (let col = 0; col < gridColumns; col++) {
+      for (let row = 0; row < gridRows; row++) {
+        instancePosition.set(
+          (col - (gridColumns - 1) / 2) * gridSpacing,
+          (row - (gridRows - 1) / 2) * gridSpacing,
+          0
+        );
+        instanceMatrix.setPosition(instancePosition);
+        this.hiddenGrid.setMatrixAt(instanceIndex, instanceMatrix);
+        instanceIndex++;
+      }
+    }
+    this.hiddenGrid.instanceMatrix.needsUpdate = true;
+    this.scene.add(this.hiddenGrid);
 
     // Add some lighting. Warm-tinted instead of neutral white so shadows read
     // as soft warm umber (like ink on cream paper) rather than harsh digital
@@ -309,6 +444,8 @@ export default class LandingScene extends BaseThreeJS{
   }
 
   update() {
+    if (this.lockIdleLook) return;
+
     // Calculate a scale factor for movement and lerping based on the camera's z position
     const zMin = 0;   // Closest z position
     const zMax = 1500; // Farthest z position
@@ -376,7 +513,7 @@ export default class LandingScene extends BaseThreeJS{
   // vertical scroll room, so this reads as the same beat instead of the
   // ball just running out of frame.
   createSplitWall(material, x, z = 0, y = -100) {
-    const halfGeom = new THREE.BoxGeometry(100, 500, 100);
+    const halfGeom = new THREE.BoxGeometry(100, WALL_HALF_HEIGHT, 100);
     const wallMaterial = material.clone();
     wallMaterial.uniforms.uBaseColor.value.set(PALETTE.ink);
 
@@ -384,20 +521,23 @@ export default class LandingScene extends BaseThreeJS{
     if (this.isPortrait) {
       group.position.set(z, y, x);
       group.rotation.z = Math.PI / 2;
+      group.scale.set(0.4, 1, 0.25);
+
     } else {
       group.position.set(x, y, z);
       group.rotation.x = Math.PI / 2;
+      group.scale.set(0.4, 1, 0.4);
+
     }
-    group.scale.set(0.4, 1, 0.4);
     this.scene.add(group);
 
     const topHalf = new THREE.Mesh(halfGeom, wallMaterial);
-    topHalf.position.y = 250;
+    topHalf.position.y = WALL_HALF_HEIGHT / 2;
     topHalf.castShadow = true;
     group.add(topHalf);
 
     const bottomHalf = new THREE.Mesh(halfGeom, wallMaterial);
-    bottomHalf.position.y = -250;
+    bottomHalf.position.y = -WALL_HALF_HEIGHT / 2;
     bottomHalf.castShadow = true;
     group.add(bottomHalf);
 
@@ -445,6 +585,62 @@ export default class LandingScene extends BaseThreeJS{
     }
     posAttr.needsUpdate = true;
     this.floor.geometry.computeVertexNormals();
+  }
+
+  // Crossfades the sphere (this.floor, already fully morphed) into the real
+  // cube mesh by scaling one down as the other scales up. Called from the
+  // scroll timeline with u in 0..1, right after setFloorMorphAmount has
+  // already fully morphed the floor into the sphere; u is allowed to keep
+  // rising past 1 so the same driver also covers the cube growing beyond its
+  // base size once fully crossfaded in (the floor's own scale just clamps at
+  // 0 and stays there). Cube position is handled separately in main.js - it
+  // needs to detach from the floor's position and move toward wall three, and
+  // this method doesn't know about that.
+  // One-shot handoff from the floor (still shaped like a sphere at this
+  // point, radius 25 - see setFloorMorphAmount) to the dedicated morph-cube
+  // mesh below, which starts at that exact same sphere shape and size (see
+  // morphSphereRadius in init()) - the swap is invisible, no crossfade
+  // needed, since the two coincide at this instant.
+  revealMorphCube() {
+    this.floor.visible = false;
+    this.cube.visible = true;
+  }
+
+  hideMorphCube() {
+    this.floor.visible = true;
+    this.cube.visible = false;
+  }
+
+  // Projects each vertex of a box-shaped position buffer outward to a sphere
+  // of the given radius, by normalizing its direction from center - used to
+  // derive the morph-cube's sphere target from its own (already box-shaped)
+  // geometry, so both ends of the morph share the same vertices/topology.
+  computeNormalizedSphereTargets(boxPositions, radius) {
+    const target = new Float32Array(boxPositions.length);
+    for (let i = 0; i < boxPositions.length; i += 3) {
+      const x = boxPositions[i];
+      const y = boxPositions[i + 1];
+      const z = boxPositions[i + 2];
+      const scale = radius / Math.sqrt(x * x + y * y + z * z);
+      target[i] = x * scale;
+      target[i + 1] = y * scale;
+      target[i + 2] = z * scale;
+    }
+    return target;
+  }
+
+  // Lerps the morph-cube's vertices between the sphere target and its own
+  // native box shape. Called from the scroll timeline with t in 0..1.
+  setMorphCubeAmount(t) {
+    const posAttr = this.cube.geometry.attributes.position;
+    const sphere = this.morphSpherePositions;
+    const cubeShape = this.morphCubePositions;
+
+    for (let i = 0; i < sphere.length; i++) {
+      posAttr.array[i] = THREE.MathUtils.lerp(sphere[i], cubeShape[i], t);
+    }
+    posAttr.needsUpdate = true;
+    this.cube.geometry.computeVertexNormals();
   }
 
   initPostprocessing() {

@@ -215,6 +215,18 @@ function animate() {
 // phases' existing scroll budget instead of adding real room.
 const CHAPTER_STOPPAGE = 1.5;
 const CHAPTER_STOPPAGE_PX_PER_UNIT = 1 / 3;
+// Same breathing-room gap as CHAPTER_STOPPAGE, held after the sphere finishes
+// rolling and before chapter four's transition (fov/cube-morph/walls/orbit)
+// begins - see PHASE4_START below. PHASE4_DURATION is that transition's own
+// scrubbed length. Both need to be known up front (not just inside onload())
+// since the scrollTrigger `end` below adds scroll room for them.
+const CHAPTER_FOUR_STOPPAGE = 1.5;
+// Bumped up from the original 1.5 once chapter four grew a second beat (cube
+// growth/relocation into wall three's gap, that wall opening, the hidden
+// grid reveal) stacked on top of the fov/cube-morph/wall-exit/orbit beats it
+// already had - all of it still shares this one window, so it needed more
+// scrubbed scroll room to stay readable rather than feeling rushed.
+const PHASE4_DURATION = 2.5;
 
 // Timeline for events in the landing section
 const landingSceneTimeline = gsap.timeline({
@@ -231,7 +243,7 @@ const landingSceneTimeline = gsap.timeline({
 		// further CHAPTER_STOPPAGE-driven pad is added on top so the chapter
 		// reveal below gets genuine extra scroll room, not room borrowed from
 		// later phases. Recomputed on resize since it reads window.innerHeight.
-		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * CHAPTER_STOPPAGE),
+		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION)),
 		invalidateOnRefresh: true,
 		scrub: 1, // lower scrub means the camera reacts more directly to scrolling
 		markers: false
@@ -380,6 +392,7 @@ function onload(){
 	// Phase 4
 	const floorMorph = { t: 0 };
 	let verticalBoxesShadowsHidden = false;
+	let hiddenGridRevealed = false;
 	// Ambient light lifts from its base 0.25 to 1 only in the final stretch of
 	// the morph, flattening out the directional light's shadow on the sphere
 	// without having to fight the shadow-casting geometry directly. Stays flat
@@ -410,6 +423,16 @@ function onload(){
 			if (shouldHide !== verticalBoxesShadowsHidden) {
 				verticalBoxesShadowsHidden = shouldHide;
 				landingScene.verticalBoxes.forEach(box => { box.castShadow = !shouldHide; });
+			}
+
+			// The hidden cube grid (chapter four's final beat) has no part in
+			// chapters before this - stays invisible until the floor is fully a
+			// sphere, then reveals right as chapter four's own beats take over,
+			// rather than sitting in the scene (out of frame or not) the whole time.
+			const shouldRevealGrid = floorMorph.t >= 1;
+			if (shouldRevealGrid !== hiddenGridRevealed) {
+				hiddenGridRevealed = shouldRevealGrid;
+				landingScene.hiddenGrid.visible = shouldRevealGrid;
 			}
 		},
 	}, PHASE3_START + 1);
@@ -485,6 +508,15 @@ function onload(){
 	// Break severity drops off per wall - first impact takes the hardest hit,
 	// second is glancing, third entry is omitted entirely (never hit, stays intact).
 	const breakSeverity = [1, 0.4];
+	// This kick is applied in the half's LOCAL y, which - via createSplitWall's
+	// rotation - lands on world Z (screen-vertical) on desktop but world X
+	// (screen-horizontal) on portrait. Desktop's vertical frame is ~+-197
+	// world units at this camera distance, so a 220 kick landing there was
+	// already about as far as it could go before running off-frame. Portrait's
+	// horizontal frame is much narrower still (~+-80), so the same 220 kick
+	// sent the broken halves flying well past the edges instead of just
+	// cracking open in place - scaled down here to stay roughly in-frame.
+	const breakKickDistance = landingScene.isPortrait ? 70 : 220;
 
 	landingScene.walls.forEach((wall, i) => {
 		const severity = breakSeverity[i];
@@ -493,7 +525,7 @@ function onload(){
 		const hitTime = sphereMoveStart + (wall.group.position[rollAxis] / sphereTravelDistance) * sphereMoveDuration - .8;
 
 		landingSceneTimeline.to(wall.topHalf.position, {
-			y: `+=${220 * severity}`,
+			y: `+=${breakKickDistance * severity}`,
 			x: `+=${40 * severity}`,
 			ease: 'power2.out',
 			duration: 0.3,
@@ -505,7 +537,7 @@ function onload(){
 		}, hitTime);
 
 		landingSceneTimeline.to(wall.bottomHalf.position, {
-			y: `-=${220 * severity}`,
+			y: `-=${breakKickDistance * severity}`,
 			x: `-=${40 * severity}`,
 			ease: 'power2.out',
 			duration: 0.3,
@@ -516,6 +548,267 @@ function onload(){
 			duration: 0.3,
 		}, hitTime);
 	});
+
+	// Chapter 4 - held back by CHAPTER_FOUR_STOPPAGE past where the sphere
+	// finishes rolling, same "give the reader scroll room" reasoning as
+	// PHASE3_START's own gap above.
+	const PHASE4_START = sphereMoveStart + sphereMoveDuration + CHAPTER_FOUR_STOPPAGE;
+
+	// The chapter 0/1 vertical boxes (already slid off to the side back in
+	// Phase 3) are fully removed from the scene once chapter four starts -
+	// the camera's wide-open orbit below would otherwise bring them back
+	// into view sitting in the distance. Re-added the instant scroll reverses
+	// back past this point, same call+direction-check pattern used for the
+	// chapter two/three text reveals above.
+	landingSceneTimeline.call(() => {
+		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			landingScene.verticalBoxes.forEach(box => landingScene.scene.remove(box));
+		} else {
+			landingScene.verticalBoxes.forEach(box => landingScene.scene.add(box));
+		}
+	}, null, PHASE4_START);
+
+	// FOV grows back from the near-orthographic 12 to the scene's normal
+	// responsive FOV, restoring real perspective depth for chapter four.
+	landingSceneTimeline.to(landingScene.camera, {
+		fov: landingScene.getResponsiveFov(landingScene.camera.aspect),
+		ease: 'power3.inOut',
+		duration: PHASE4_DURATION,
+		onUpdate: () => landingScene.camera.updateProjectionMatrix(),
+	}, PHASE4_START);
+	
+
+	// The red sphere morphs into a cube as one continuously-deforming mesh
+	// (see LandingScene's morph-cube geometry) rather than two objects
+	// crossfading - a separate sphere shrinking as an unrelated cube grew
+	// read as two things swapping places, not one thing changing shape. The
+	// swap from the floor (still sphere-shaped here) to the dedicated
+	// morph-cube mesh is a plain visibility toggle - both are the same
+	// sphere, same size, at this exact instant, so there's nothing to
+	// crossfade.
+	const wall3 = landingScene.walls[2];
+	landingSceneTimeline.call(() => {
+		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			landingScene.revealMorphCube();
+		} else {
+			landingScene.hideMorphCube();
+		}
+	}, null, PHASE4_START);
+
+	// Sphere -> cube shape, then flat-shaded the instant it fully lands on
+	// the cube (same reasoning as the old approach: smoothed vertex normals
+	// read as a soft bevel right at the edges even though the geometry itself
+	// is genuinely flat by then).
+	const shapeMorph = { t: 0 };
+	let cubeFlatShadingActive = false;
+	landingSceneTimeline.to(shapeMorph, {
+		t: 1,
+		ease: 'power3.inOut',
+		duration: PHASE4_DURATION,
+		onUpdate: () => {
+			landingScene.setMorphCubeAmount(shapeMorph.t);
+			const shouldBeFlat = shapeMorph.t >= 1;
+			if (shouldBeFlat !== cubeFlatShadingActive) {
+				cubeFlatShadingActive = shouldBeFlat;
+				landingScene.cube.material.flatShading = shouldBeFlat;
+				landingScene.cube.material.needsUpdate = true;
+			}
+		},
+	}, PHASE4_START);
+
+	// The hero cube stays at its own base size - already an exact match for
+	// the hidden grid's current tile size (cubeBaseSize:40 == gridTileSize:100
+	// * wall three's own resting scale:0.4), so nothing needs to grow here.
+	// Wall three's halves shrink their height down to that same size instead
+	// (below), so all three end up identical: 2 black, 1 red.
+	const heroCubeSize = landingScene.cubeBaseSize;
+
+	// Wall three's halves shrink in height down to heroCubeSize - their
+	// width/depth already sit at that size at rest on desktop (halfGeom's 100
+	// units * createSplitWall's 0.4 scale = 40), so only height needs to move
+	// to turn each half into a cube matching the hero cube and the hidden
+	// grid's own tiles exactly. Portrait's own rest scale is (0.4, 1, 0.25)
+	// though - its Z isn't at that size at rest, so X/Z both animate to
+	// landingScene.gridToCubeScale explicitly too rather than assuming
+	// desktop's "already there". A no-op on desktop, where they're at that
+	// value already. The grid itself is left untouched - it's already at the
+	// size everything else is shrinking/staying to meet.
+	const wall3ShrinkScaleY = heroCubeSize / landingScene.cubeModuleSize; // cubeModuleSize == WALL_HALF_HEIGHT
+	landingSceneTimeline.to(wall3.group.scale, {
+		x: landingScene.gridToCubeScale,
+		y: wall3ShrinkScaleY,
+		z: landingScene.gridToCubeScale,
+		ease: 'power3.inOut',
+		duration: PHASE4_DURATION,
+	}, PHASE4_START);
+
+	// The cube detaches from the sphere's resting spot and slides over to
+	// wall three's gap - captured with the same threshold-latch pattern as
+	// the camera orbit below (rather than a plain .to() on cube.position)
+	// because a scrubbed .to() would freeze its "from" at cube.position's
+	// value when this timeline was first built (page load), not at wherever
+	// the sphere actually ends up after Phase 6's roll.
+	const cubeMove = { t: 0 };
+	let cubeMoveActive = false;
+	let cubeMoveFrom = null;
+	landingSceneTimeline.to(cubeMove, {
+		t: 1,
+		ease: 'power3.inOut',
+		duration: PHASE4_DURATION,
+		onUpdate: () => {
+			const shouldBeActive = cubeMove.t > 0;
+			if (shouldBeActive !== cubeMoveActive) {
+				cubeMoveActive = shouldBeActive;
+				if (shouldBeActive) {
+					cubeMoveFrom = landingScene.floor.position.clone();
+				}
+			}
+			if (!cubeMoveActive) {
+				landingScene.cube.position.copy(landingScene.floor.position);
+				return;
+			}
+			landingScene.cube.position.lerpVectors(cubeMoveFrom, wall3.group.position, cubeMove.t);
+		},
+	}, PHASE4_START);
+
+	// Wall three (never hit by the sphere, still standing) opens to make room
+	// for the cube arriving in its gap - a plain slide-apart rather than the
+	// dramatic kick+rotation the two hit walls got, since this one isn't
+	// breaking, just making way. Sized so each half ends up exactly one
+	// landingScene.gridWorldSpacing from the cube (not just clear of it) -
+	// createSplitWall's own rotation.x turns this local-Y opening into a
+	// world-Z separation, which is the same axis the hidden grid's own
+	// columns are spaced along, so the opened halves land squarely on the
+	// grid's own column slots either side of the cube's, reading as a
+	// continuation of the grid's rhythm rather than an ad-hoc gap. This
+	// offset is applied in the half's LOCAL space, which wall3.group.scale.y
+	// above is simultaneously shrinking down to wall3ShrinkScaleY - so it has
+	// to be inflated by 1/wall3ShrinkScaleY up front to still land on that
+	// real-world spacing once the shrink has crushed it back down.
+	const wall3OpenGap = landingScene.gridWorldSpacing / wall3ShrinkScaleY - landingScene.cubeModuleSize / 2;
+	landingSceneTimeline.to(wall3.topHalf.position, {
+		y: `+=${wall3OpenGap}`,
+		ease: 'power3.inOut',
+		duration: PHASE4_DURATION,
+	}, PHASE4_START);
+	landingSceneTimeline.to(wall3.bottomHalf.position, {
+		y: `-=${wall3OpenGap}`,
+		ease: 'power3.inOut',
+		duration: PHASE4_DURATION,
+	}, PHASE4_START);
+
+	// The two walls that already broke open join the grid too, instead of
+	// flying off and clearing the frame - each shrinks into cube-tiles the
+	// same way wall three did above, and slides over to share wall three's
+	// own position on the grid's column axis (the same column the cube lands
+	// in), rather than forming separate columns of their own. Height is
+	// where they differ: wall three's own halves already claim the row
+	// immediately above/below the cube (+-1 gridWorldSpacing); these two
+	// walls' four halves each claim one of the four rows further out still
+	// (+-2 and +-3 spacings), so all four plus wall three's own three fill
+	// every row in that column - a complete 7-row column matching the grid's
+	// own height. Wall two (index 1, the nearer/less-broken wall) takes the
+	// rows adjacent to wall three's own (+-2); wall one (index 0, the
+	// farther/harder-hit wall) takes the outermost rows (+-3).
+	//
+	// The column axis itself flips with LandingScene's own portrait/desktop
+	// rotation branch (see hiddenGrid's setup): desktop's columns land on
+	// world X, portrait's on world Z - matching wall three's group.position
+	// on whichever axis that is keeps this wall sliding to the right column
+	// instead of onto wall three's own row axis.
+	const brokenWallRowSteps = [3, 2];
+	const columnMatchAxis = landingScene.isPortrait ? 'z' : 'x';
+	landingScene.walls.forEach((wall, i) => {
+		const severity = breakSeverity[i];
+		if (!severity) return; // third wall was never hit, handled above
+
+		landingSceneTimeline.to(wall.group.scale, {
+			x: landingScene.gridToCubeScale,
+			y: wall3ShrinkScaleY,
+			z: landingScene.gridToCubeScale,
+			ease: 'power3.inOut',
+			duration: PHASE4_DURATION,
+		}, PHASE4_START);
+		landingSceneTimeline.to(wall.group.position, {
+			[columnMatchAxis]: wall3.group.position[columnMatchAxis],
+			ease: 'power3.inOut',
+			duration: PHASE4_DURATION,
+		}, PHASE4_START);
+
+		// Straightens the break's kick and tilt back out: position returns to
+		// an absolute target (not relative - these halves are animating back
+		// from wherever the break's kick left them, not from their original
+		// rest position) sized the same way wall3OpenGap sizes wall three's
+		// own halves, but stepped out by this wall's own row count instead of
+		// 1, landing it in its own dedicated row. rotation.z (the break's
+		// tilt) unwinds back to 0 so each half reads as a flat, upright tile.
+		const rowSteps = brokenWallRowSteps[i];
+		const rowOffset = (rowSteps * landingScene.gridWorldSpacing) / wall3ShrinkScaleY;
+		landingSceneTimeline.to(wall.topHalf.position, {
+			x: 0,
+			y: rowOffset,
+			ease: 'power3.inOut',
+			duration: PHASE4_DURATION,
+		}, PHASE4_START);
+		landingSceneTimeline.to(wall.topHalf.rotation, {
+			z: 0,
+			ease: 'power3.inOut',
+			duration: PHASE4_DURATION,
+		}, PHASE4_START);
+		landingSceneTimeline.to(wall.bottomHalf.position, {
+			x: 0,
+			y: -rowOffset,
+			ease: 'power3.inOut',
+			duration: PHASE4_DURATION,
+		}, PHASE4_START);
+		landingSceneTimeline.to(wall.bottomHalf.rotation, {
+			z: 0,
+			ease: 'power3.inOut',
+			duration: PHASE4_DURATION,
+		}, PHASE4_START);
+	});
+
+	// Camera dollies straight forward along whatever direction it's already
+	// facing - a plain push, not an orbit or pan, so the grid/hero-cube read
+	// closer and larger without any change in viewing angle. Direction and
+	// distance are both captured live the instant this phase activates (not
+	// fixed constants), same "no jump at the handoff" reasoning as the rest
+	// of this timeline's threshold-latched tweens: this is exactly the idle
+	// look's own forward vector, and the distance closed is a fraction of
+	// however far the camera actually was from the subject at that moment,
+	// so it scales correctly whether that's desktop's or portrait's own
+	// idle-look height instead of assuming a fixed one.
+	// update()'s idle mouse-look would otherwise fight this every frame (it
+	// lerps camera position back toward its own idle target), so it's locked
+	// via landingScene.lockIdleLook for the duration.
+	const dollyForwardFactor = .6;
+	const dolly = { t: 0 };
+	let dollyActive = false;
+	const dollyStartPosition = new THREE.Vector3();
+	const dollyDirection = new THREE.Vector3();
+	let dollyDistance = 0;
+	landingSceneTimeline.to(dolly, {
+		t: 1,
+		ease: 'power2.inOut',
+		duration: PHASE4_DURATION,
+		onUpdate: () => {
+			const shouldBeActive = dolly.t > 0;
+			if (shouldBeActive !== dollyActive) {
+				dollyActive = shouldBeActive;
+				landingScene.lockIdleLook = shouldBeActive;
+				if (shouldBeActive) {
+					dollyStartPosition.copy(landingScene.camera.position);
+					landingScene.camera.getWorldDirection(dollyDirection);
+					dollyDistance = dollyStartPosition.distanceTo(landingScene.lookAtTarget) * dollyForwardFactor;
+				}
+			}
+			if (!dollyActive) return;
+
+			landingScene.camera.position
+				.copy(dollyStartPosition)
+				.addScaledVector(dollyDirection, dollyDistance * dolly.t);
+		},
+	}, PHASE4_START);
 
 };
 

@@ -227,6 +227,12 @@ const CHAPTER_FOUR_STOPPAGE = 1.5;
 // already had - all of it still shares this one window, so it needed more
 // scrubbed scroll room to stay readable rather than feeling rushed.
 const PHASE4_DURATION = 2.5;
+// Shared by the sphere's own roll into the walls (Phase 6) and the hero
+// cube's post-chapter-four roll (Phase 5 extension) below - both read as the
+// same "roll" beat, so they share one scrubbed length. Declared up here
+// (not inside onload()) for the same reason as PHASE4_DURATION above: the
+// scrollTrigger `end` needs it before onload() ever runs.
+const sphereMoveDuration = 1;
 
 // Timeline for events in the landing section
 const landingSceneTimeline = gsap.timeline({
@@ -243,7 +249,7 @@ const landingSceneTimeline = gsap.timeline({
 		// further CHAPTER_STOPPAGE-driven pad is added on top so the chapter
 		// reveal below gets genuine extra scroll room, not room borrowed from
 		// later phases. Recomputed on resize since it reads window.innerHeight.
-		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION)),
+		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION + sphereMoveDuration)),
 		invalidateOnRefresh: true,
 		scrub: 1, // lower scrub means the camera reacts more directly to scrolling
 		markers: false
@@ -491,13 +497,13 @@ function onload(){
 	// position->progress mappings, lining the two up by math reads as a real
 	// hit and stays scrubbable (and reversible) in both scroll directions.
 	const sphereMoveStart = PHASE3_START + 3;
-	const sphereMoveDuration = 1;
 	// Portrait screens have almost no horizontal frame to roll the sphere
 	// across (see LandingScene.createSplitWall), so the walls are laid out
 	// along world Z there instead of world X, and the sphere drops through
 	// them via floor.position.z instead of rolling into them via .x - over a
 	// much shorter distance, matching the tighter portrait wall spacing.
 	const rollAxis = landingScene.isPortrait ? 'z' : 'x';
+
 	const sphereTravelDistance = landingScene.isPortrait ? 65 : 260; // stops just past wall 1, short of wall 2
 	landingSceneTimeline.to(landingScene.floor.position, {
 		[rollAxis]: sphereTravelDistance,
@@ -592,6 +598,18 @@ function onload(){
 			landingScene.revealMorphCube();
 		} else {
 			landingScene.hideMorphCube();
+		}
+	}, null, PHASE4_START);
+
+	// Ground shadow catcher (see LandingScene's own construction of it)
+	// switches on right alongside the morph-cube reveal above - same
+	// direction-checked one-shot toggle pattern as the rest of this
+	// timeline's chapter four handoffs.
+	landingSceneTimeline.call(() => {
+		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			landingScene.shadowCatcher.visible = true;
+		} else {
+			landingScene.shadowCatcher.visible = false;
 		}
 	}, null, PHASE4_START);
 
@@ -768,47 +786,185 @@ function onload(){
 		}, PHASE4_START);
 	});
 
-	// Camera dollies straight forward along whatever direction it's already
-	// facing - a plain push, not an orbit or pan, so the grid/hero-cube read
-	// closer and larger without any change in viewing angle. Direction and
-	// distance are both captured live the instant this phase activates (not
-	// fixed constants), same "no jump at the handoff" reasoning as the rest
-	// of this timeline's threshold-latched tweens: this is exactly the idle
-	// look's own forward vector, and the distance closed is a fraction of
-	// however far the camera actually was from the subject at that moment,
-	// so it scales correctly whether that's desktop's or portrait's own
-	// idle-look height instead of assuming a fixed one.
+	// Camera orbits while closing in, rather than a plain straight-ahead push
+	// - a pure dolly changed apparent size only, competing with the FOV tween
+	// above (which is also changing apparent size, in the opposite direction)
+	// for no real payoff. Orbiting instead sweeps the viewing angle ~90
+	// degrees around the vertical axis as it closes in, which reads as the
+	// whole grid/cube arrangement rotating under the camera rather than a
+	// digital zoom. That rotation matters here specifically because the
+	// camera is looking almost straight down by this point in the sequence
+	// (see update()'s tiltAngle, which has already rotated camera.up to
+	// roughly (0,0,-1), making world Z the screen-vertical axis and world X
+	// the screen-horizontal one) - the hero cube, which currently reads as
+	// sitting beside the grid (the two differ along world X, today's
+	// screen-horizontal axis), ends up reading as sitting below it instead
+	// (differing along world Z, screen-vertical) once a quarter-turn has
+	// swapped the axes' screen roles.
+	// The pivot orbits around is NOT landingScene.lookAtTarget (the world
+	// origin) - the grid/cube sit hundreds of units off-axis from there, so
+	// swinging the camera around that distant a point swept the subject
+	// wildly across the frame and off the edge. It's instead the midpoint
+	// between the grid and the cube's landing spot (wall3's own position),
+	// which keeps both comfortably framed through the whole turn. To still
+	// avoid a snap at the handoff (the camera was looking at lookAtTarget the
+	// instant before this phase locks idle-look off), the pivot itself lerps
+	// from lookAtTarget to that midpoint over the same eased progress the
+	// orbit/dolly uses, rather than jumping straight to it at t=0.
+	// Start offset/up are captured live off the actual camera the instant
+	// this phase activates (not fixed constants), same "no jump at the
+	// handoff" reasoning as the rest of this timeline's threshold-latched
+	// tweens, and the up vector orbits together with the position (instead
+	// of staying fixed) so the roll stays consistent through the turn rather
+	// than snapping - the same reason update()'s own tiltAngle rotates up in
+	// step with the tilt instead of leaving it at a constant (0,1,0).
 	// update()'s idle mouse-look would otherwise fight this every frame (it
 	// lerps camera position back toward its own idle target), so it's locked
 	// via landingScene.lockIdleLook for the duration.
-	const dollyForwardFactor = .6;
-	const dolly = { t: 0 };
-	let dollyActive = false;
-	const dollyStartPosition = new THREE.Vector3();
-	const dollyDirection = new THREE.Vector3();
-	let dollyDistance = 0;
-	landingSceneTimeline.to(dolly, {
+	const orbitRadiusCloseFactor = .72; // fraction of the starting distance-to-pivot closed by the end
+	const orbitAngle = -Math.PI / 2.5; // sweep direction - flip the sign if the grid ends up rotating the wrong way
+	const orbitAxis = new THREE.Vector3(0, 1, 0);
+	// The orbit above only changes azimuth (rotation around the vertical
+	// axis), which keeps the camera at whatever elevation the idle look
+	// happened to be at going in - a near-top-down angle by this point in
+	// the scroll (see update()'s tiltAngle), so the end of the move read as
+	// a flat, orthographic-looking grid instead of a dimensional one. This
+	// tilts the camera down off that top-down angle, but only over the back
+	// end of the move (from 60% progress) - layering it in earlier fought
+	// the pivot recentering above and made the whole move read messy - so it
+	// resolves into a 3/4 view with real depth (cube's side faces visible)
+	// right as the orbit/dolly settle, rather than fighting them mid-swing.
+	const orbitTiltAngle = THREE.MathUtils.degToRad(-45); // flip the sign if this tilts toward more top-down instead of less
+	const orbitPivotEnd = new THREE.Vector3()
+		.addVectors(landingScene.hiddenGrid.position, wall3.group.position)
+		.multiplyScalar(0.5);
+	const orbit = { t: 0 };
+	let orbitActive = false;
+	const orbitStartOffset = new THREE.Vector3();
+	const orbitStartUp = new THREE.Vector3();
+	const orbitPivot = new THREE.Vector3();
+	const orbitOffset = new THREE.Vector3();
+	const orbitUp = new THREE.Vector3();
+	const orbitTiltAxis = new THREE.Vector3();
+	// The directional light swings 90 degrees over the same span as the
+	// camera orbit above, so the shadows the grid casts on the shadow
+	// catcher (see LandingScene) visibly sweep around too rather than
+	// staying static while everything else moves. Unlike the camera's own
+	// orbit, this one doesn't need a live-captured start offset or the
+	// up-vector workaround above - the light's position/target are plain
+	// fixed constants (see LandingScene's init()), never touched by the
+	// idle look, so there's no degenerate-vector risk here to begin with.
+	const lightOrbitAngle = Math.PI / 2; // "to the right" - flip the sign if it swings the wrong way
+	const lightTargetPosition = landingScene.directionalLight.target.position;
+	const lightStartOffset = landingScene.directionalLight.position.clone().sub(lightTargetPosition);
+	const lightOffset = new THREE.Vector3();
+	landingSceneTimeline.to(orbit, {
 		t: 1,
 		ease: 'power2.inOut',
 		duration: PHASE4_DURATION,
 		onUpdate: () => {
-			const shouldBeActive = dolly.t > 0;
-			if (shouldBeActive !== dollyActive) {
-				dollyActive = shouldBeActive;
+			const shouldBeActive = orbit.t > 0;
+			if (shouldBeActive !== orbitActive) {
+				orbitActive = shouldBeActive;
 				landingScene.lockIdleLook = shouldBeActive;
 				if (shouldBeActive) {
-					dollyStartPosition.copy(landingScene.camera.position);
-					landingScene.camera.getWorldDirection(dollyDirection);
-					dollyDistance = dollyStartPosition.distanceTo(landingScene.lookAtTarget) * dollyForwardFactor;
+					orbitStartOffset.copy(landingScene.camera.position).sub(landingScene.lookAtTarget);
+					orbitStartUp.copy(landingScene.camera.up);
 				}
 			}
-			if (!dollyActive) return;
+			if (!orbitActive) return;
+
+			// Pivot reaches orbitPivotEnd well before the sweep/dolly finish
+			// (by 40% progress, not 100%) - blending it in at the same rate as
+			// the turn itself left the camera orbiting a point still close to
+			// the distant lookAtTarget for most of the move, which swung the
+			// actual off-to-the-side grid/cube through a much wider arc than
+			// intended and carried it past the frame edges before the pivot
+			// finally caught up near the very end. Position stays continuous
+			// either way (it's built fresh from pivot/angle/radius every
+			// frame, all of them smooth in orbit.t), so front-loading this is
+			// just a path-shape choice, not a source of a jump.
+			const pivotBlend = Math.min(orbit.t / 0.4, 1);
+			orbitPivot.lerpVectors(landingScene.lookAtTarget, orbitPivotEnd, pivotBlend);
+			const angle = orbitAngle * orbit.t;
+			const radiusFactor = 1 - orbitRadiusCloseFactor * orbit.t;
+			const tailBlend = Math.max(0, (orbit.t - 0.6) / 0.4);
+			const tiltAmount = orbitTiltAngle * tailBlend;
+
+			orbitOffset.copy(orbitStartOffset).applyAxisAngle(orbitAxis, angle);
+			orbitUp.copy(orbitStartUp).applyAxisAngle(orbitAxis, angle);
+			if (tiltAmount !== 0) {
+				// Deriving this from orbitOffset (as an earlier version did)
+				// was the actual bug behind "sometimes the grid rolls left,
+				// sometimes right, sometimes there's no tilt at all": by this
+				// point in the scroll the idle look's camera position sits
+				// exactly above lookAtTarget (update()'s targetX/zFactor both
+				// converge to exactly 0 here, not just approximately), so
+				// orbitOffset is a purely vertical vector with zero
+				// horizontal component - crossing it with the vertical
+				// orbitAxis gave an exact (0,0,0), and normalizing that zero
+				// vector left applyAxisAngle rotating around a meaningless
+				// axis, which is either a no-op or genuinely undefined
+				// depending on tiny floating-point residue, not real mouse
+				// noise. orbitUp has no such degeneracy - it starts
+				// genuinely horizontal ((0,~0,-1), see update()'s tiltAngle)
+				// and is exactly what the sweep above actually rotates to
+				// produce the "grid turning" look (since position stays
+				// pinned directly over the pivot the whole time, the turn is
+				// entirely the up vector rolling under lookAt) - so it's the
+				// only live vector that reliably still has a real horizontal
+				// component to build a tilt axis from.
+				orbitTiltAxis.crossVectors(orbitAxis, orbitUp).normalize();
+				orbitOffset.applyAxisAngle(orbitTiltAxis, tiltAmount);
+				orbitUp.applyAxisAngle(orbitTiltAxis, tiltAmount);
+			}
 
 			landingScene.camera.position
-				.copy(dollyStartPosition)
-				.addScaledVector(dollyDirection, dollyDistance * dolly.t);
+				.copy(orbitOffset)
+				.multiplyScalar(radiusFactor)
+				.add(orbitPivot);
+			landingScene.camera.up.copy(orbitUp);
+			landingScene.camera.lookAt(orbitPivot);
+
+			lightOffset.copy(lightStartOffset).applyAxisAngle(orbitAxis, lightOrbitAngle * orbit.t * 0.8);
+			landingScene.directionalLight.position.copy(lightTargetPosition).add(lightOffset);
+
+			// Shadow catcher fades in over the same span instead of popping
+			// straight to full strength the instant it's toggled visible
+			// (see main.js's earlier PHASE4_START call) - so the ground reads
+			// as gradually settling in under the grid rather than snapping on.
+			landingScene.shadowCatcher.material.opacity = orbit.t * 0.35;
 		},
 	}, PHASE4_START);
+
+	// Phase 5 (extension) - once chapter four's transition settles, the hero
+	// cube gets one final roll: dropping down a bit, rolling 50deg, and
+	// growing to 1.5x, all over the same scrubbed length as the sphere's own
+	// roll into the walls back in Phase 6 (sphereMoveDuration) so the two
+	// "roll" beats read as the same gesture.
+	const PHASE5_START = PHASE4_START + PHASE4_DURATION;
+	const cubeDropDistance = heroCubeSize * 2; // "a bit" - half the cube's own size
+	const cubeRollAngle = THREE.MathUtils.degToRad(50);
+
+	landingSceneTimeline.to(landingScene.cube.position, {
+		[rollAxis]: `-=${cubeDropDistance}`,
+		ease: 'power2.inOut',
+		duration: sphereMoveDuration,
+	}, PHASE5_START);
+
+	landingSceneTimeline.to(landingScene.cube.rotation, {
+		y: `+=${cubeRollAngle}`,
+		ease: 'power2.inOut',
+		duration: sphereMoveDuration,
+	}, PHASE5_START);
+
+	landingSceneTimeline.to(landingScene.cube.scale, {
+		x: 1.5,
+		y: 1.5,
+		z: 1.5,
+		ease: 'power2.inOut',
+		duration: sphereMoveDuration,
+	}, PHASE5_START);
 
 };
 

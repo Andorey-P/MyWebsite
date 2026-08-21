@@ -408,6 +408,29 @@ export default class LandingScene extends BaseThreeJS{
     this.hiddenGrid.instanceMatrix.needsUpdate = true;
     this.scene.add(this.hiddenGrid);
 
+    // Chapter four's ground shadow catcher - a plane sitting just below the
+    // hidden grid's own tile bottoms, invisible everywhere except where a
+    // shadow actually falls on it (THREE.ShadowMaterial renders nothing but
+    // the shadow itself), so the tiles/hero cube read as resting on real
+    // ground once the chapter four camera tilt (see main.js) brings the
+    // scene off top-down enough to actually see a shadow, rather than
+    // floating in space. Sized well past the grid/hero-cube footprint so it
+    // still reads as "ground" rather than a shadow-shaped cutout, and offset
+    // a fraction below the tiles' own bottom face to keep the shadow clear
+    // of acne from sitting exactly coplanar with them. Stays hidden until
+    // chapter four begins, and starts at opacity 0 - both the visibility
+    // toggle and the opacity fade from there up to full strength are driven
+    // by main.js's chapter four timeline, alongside the camera/light orbit.
+    const shadowCatcherGeometry = new THREE.PlaneGeometry(4000, 4000);
+    const shadowCatcherMaterial = new THREE.ShadowMaterial({ opacity: 0 });
+    this.shadowCatcher = new THREE.Mesh(shadowCatcherGeometry, shadowCatcherMaterial);
+    this.shadowCatcher.rotation.x = -Math.PI / 2;
+    this.shadowCatcher.position.copy(this.hiddenGrid.position);
+    this.shadowCatcher.position.y -= this.cubeBaseSize / 2 + 0.5;
+    this.shadowCatcher.receiveShadow = true;
+    this.shadowCatcher.visible = false;
+    this.scene.add(this.shadowCatcher);
+
     // Add some lighting. Warm-tinted instead of neutral white so shadows read
     // as soft warm umber (like ink on cream paper) rather than harsh digital
     // black, and the "sun" reads like late-afternoon light, not a studio key.

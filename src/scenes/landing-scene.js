@@ -389,7 +389,33 @@ export default class LandingScene extends BaseThreeJS{
       this.hiddenGrid.position.x += gridDepthOffset;
     }
 
+    // The position landed on above is the grid's real resting spot - where it
+    // ends up once chapter four settles. Captured here, before the extra
+    // starting nudge below, so main.js can animate the grid back to this
+    // exact spot without redoing the offset math itself.
+    this.hiddenGridRestPosition = this.hiddenGrid.position.clone();
 
+    // Extra rightward nudge on top of the column-rhythm offset above, for the
+    // grid's actual starting pose only - on some aspect ratios the grid's own
+    // edge tiles sat close enough to wall three to peek out from behind it as
+    // soon as it's revealed (see main.js's floorMorph tween), before chapter
+    // four's camera orbit has turned enough to legitimately show them. main.js
+    // eases the grid from here back to hiddenGridRestPosition over chapter
+    // four's own timeline, so it settles into the same spot as before by the
+    // time that sequence finishes. Tune to taste.
+    const gridExtraRightShift = this.gridWorldSpacing * 1.5;
+    if (this.isPortrait) {
+      this.hiddenGrid.position.z += gridExtraRightShift;
+    } else {
+      this.hiddenGrid.position.x += gridExtraRightShift;
+    }
+
+    // Each instance's own local (pre-group-scale) rest position, in the same
+    // index order as setMatrixAt below - exposed so main.js's chapter five
+    // sequence can rebuild each instance's matrix directly (for a per-tile
+    // staggered flatten/spread) without re-deriving this column/row layout
+    // itself.
+    this.hiddenGridBasePositions = [];
     const instanceMatrix = new THREE.Matrix4();
     const instancePosition = new THREE.Vector3();
     let instanceIndex = 0;
@@ -400,6 +426,7 @@ export default class LandingScene extends BaseThreeJS{
           (row - (gridRows - 1) / 2) * gridSpacing,
           0
         );
+        this.hiddenGridBasePositions.push(instancePosition.clone());
         instanceMatrix.setPosition(instancePosition);
         this.hiddenGrid.setMatrixAt(instanceIndex, instanceMatrix);
         instanceIndex++;
@@ -425,7 +452,10 @@ export default class LandingScene extends BaseThreeJS{
     const shadowCatcherMaterial = new THREE.ShadowMaterial({ opacity: 0 });
     this.shadowCatcher = new THREE.Mesh(shadowCatcherGeometry, shadowCatcherMaterial);
     this.shadowCatcher.rotation.x = -Math.PI / 2;
-    this.shadowCatcher.position.copy(this.hiddenGrid.position);
+    // Anchored to the grid's rest position, not its current (starting-nudged)
+    // position - this is static ground, not something that should slide in
+    // step with the grid's own entrance tween in main.js.
+    this.shadowCatcher.position.copy(this.hiddenGridRestPosition);
     this.shadowCatcher.position.y -= this.cubeBaseSize / 2 + 0.5;
     this.shadowCatcher.receiveShadow = true;
     this.shadowCatcher.visible = false;
@@ -438,7 +468,8 @@ export default class LandingScene extends BaseThreeJS{
     this.scene.add(this.ambientLight);
 
     this.directionalLight.color.set('#fff1da');
-    this.directionalLight.position.set(-800,1000,2100)
+    const isMobileLayout = window.innerWidth <= 767;
+    this.directionalLight.position.set(isMobileLayout ? -330 : -800, 1000, 2100)
     this.directionalLight.castShadow = true;
 
     // Sharper, cleaner shadows

@@ -24,6 +24,16 @@ gsap.set('.split-reveal .char', { yPercent: 100 });
 // '.split-reveal .char' trigger, since it's triggered independently later.
 const chapterThreeTitle = new SplitType(".split-reveal-three");
 gsap.set('.split-reveal-three .char', { yPercent: 100 });
+// Chapter four gets its own split class for the same reason as chapter
+// three above - kept out of every earlier chapter's char reveal, since it's
+// triggered independently once chapter four's own animation finishes.
+const chapterFourTitle = new SplitType(".split-reveal-four");
+gsap.set('.split-reveal-four .char', { yPercent: 100 });
+// Chapter five gets its own split class for the same reason as chapters
+// three/four above - kept out of every earlier chapter's char reveal, since
+// it's triggered independently once chapter five's own camera move finishes.
+const chapterFiveTitle = new SplitType(".split-reveal-five");
+gsap.set('.split-reveal-five .char', { yPercent: 100 });
 
 // SplitType measures line/word wrapping once at split time, so a viewport
 // resize (or orientation change) that reflows the text leaves the old line
@@ -32,13 +42,22 @@ gsap.set('.split-reveal-three .char', { yPercent: 100 });
 // so a scroll-driven address-bar collapse (which also fires `resize`) only
 // triggers this once things settle, not every frame of the scroll.
 let splitResizeTimeout;
+// Same mobile-address-bar guard as ScrollTrigger.config's ignoreMobileResize
+// above, but for this listener's own explicit ScrollTrigger.refresh() call
+// below, which that config option doesn't cover - a height-only resize
+// (width unchanged) is assumed to be the address bar, not a real layout
+// change, and skipped so it can't yank the timeline mid-scroll.
+let lastResizeWidth = window.innerWidth;
 window.addEventListener('resize', () => {
+	if (window.innerWidth === lastResizeWidth) return;
+	lastResizeWidth = window.innerWidth;
 	clearTimeout(splitResizeTimeout);
 	splitResizeTimeout = setTimeout(() => {
 		title.split();
-		// chapterTwoTitle/chapterThreeTitle deliberately aren't re-split here:
-		// SplitType.split() tears down and recreates the .char elements, which
-		// would orphan the GSAP tweens in chapterTwoTimeline/chapterThreeTimeline
+		// chapterTwoTitle/chapterThreeTitle/chapterFourTitle deliberately aren't
+		// re-split here: SplitType.split() tears down and recreates the .char
+		// elements, which would orphan the GSAP tweens in
+		// chapterTwoTimeline/chapterThreeTimeline/chapterFourTimeline
 		// (see onload() in this file) that are bound to the old nodes - those
 		// tweens live for the whole session, unlike '.split .char' above which
 		// only plays once at load and is never referenced again. The reveal
@@ -62,6 +81,18 @@ window.addEventListener('resize', () => {
 
 const loadingManager = new LoadingManager();
 gsap.registerPlugin(ScrollTrigger);
+// Mobile browsers fire `resize` when the address bar collapses/expands
+// during scroll (height changes, width doesn't) - without this,
+// ScrollTrigger's own internal refresh-on-resize would recalculate the
+// landing timeline's pinned start/end against the new window.innerHeight
+// mid-scroll (its `end` above reads window.innerHeight, and
+// invalidateOnRefresh:true is set on it), remapping scroll position to a
+// different timeline progress and yanking every scroll-driven tween
+// (camera included) to wherever that new progress lands - read as a sudden
+// camera jump, most commonly hit scrolling back up (which is exactly when
+// the address bar reappears). This only covers ScrollTrigger's own
+// resize listener - the app's own listener below needs the same guard.
+ScrollTrigger.config({ ignoreMobileResize: true });
 
 // Loading gif - left as a normal autoplaying <img> (same as before, so it
 // plays at its own steady authored pace with zero added latency) for the
@@ -213,7 +244,10 @@ function animate() {
 // below), so that same rate is used here to pad the pin's scroll distance to
 // match - otherwise the extra unit would just be squeezed out of the other
 // phases' existing scroll budget instead of adding real room.
-const CHAPTER_STOPPAGE = 1.5;
+// Also doubles as the hold once Phase 2's camera dive lands on z:0 (see
+// onload() below) - the dive itself only eats the first 2 of these units,
+// leaving the rest as a genuine stop before Phase 3 resumes moving anything.
+const CHAPTER_STOPPAGE = 2.5;
 const CHAPTER_STOPPAGE_PX_PER_UNIT = 1 / 3;
 // Same breathing-room gap as CHAPTER_STOPPAGE, held after the sphere finishes
 // rolling and before chapter four's transition (fov/cube-morph/walls/orbit)
@@ -233,6 +267,27 @@ const PHASE4_DURATION = 2.5;
 // (not inside onload()) for the same reason as PHASE4_DURATION above: the
 // scrollTrigger `end` needs it before onload() ever runs.
 const sphereMoveDuration = 1;
+// Small pause after the hero cube's final post-orbit roll (Phase 5 extension,
+// see PHASE5_START below) finishes and before chapter five's own camera move
+// begins - shorter than CHAPTER_FOUR_STOPPAGE since chapter four's text is
+// already up and settled by this point, so this only needs to be a brief
+// breath before the camera starts moving again, not a full reveal pause.
+const CHAPTER_FIVE_STOPPAGE = 1;
+// Scrubbed length of chapter five's own camera move: the fov lerp back down
+// to 12 and the orbit continuing its sweep/tilt from where chapter four's
+// orbit left it (see PHASE6_START below). Declared up here for the same
+// reason as PHASE4_DURATION above - the scrollTrigger `end` needs it before
+// onload() ever runs.
+const CHAPTER_FIVE_DURATION = 1.5;
+// Trailing scroll room held past chapter five's own reveal trigger (see
+// CHAPTER_FIVE_TRIGGER in onload() below) - without this, that trigger sits
+// at the exact end of the timeline (chapter five being the last chapter,
+// nothing scrubs after it), and a GSAP .call() positioned exactly at a
+// timeline's own end never gets a genuine "crossing" to fire its reverse
+// branch when scrolling back from the very end: the playhead starts already
+// sitting on top of it instead of arriving from past it. This tail gives
+// scrolling back something real to cross through.
+const CHAPTER_FIVE_TAIL = 0.5;
 
 // Timeline for events in the landing section
 const landingSceneTimeline = gsap.timeline({
@@ -249,12 +304,13 @@ const landingSceneTimeline = gsap.timeline({
 		// further CHAPTER_STOPPAGE-driven pad is added on top so the chapter
 		// reveal below gets genuine extra scroll room, not room borrowed from
 		// later phases. Recomputed on resize since it reads window.innerHeight.
-		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION + sphereMoveDuration)),
+		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION + sphereMoveDuration + CHAPTER_FIVE_STOPPAGE + CHAPTER_FIVE_DURATION + CHAPTER_FIVE_TAIL)),
 		invalidateOnRefresh: true,
 		scrub: 1, // lower scrub means the camera reacts more directly to scrolling
 		markers: false
 	}
 })
+window.__debug = { ScrollTrigger, landingScene, landingSceneTimeline, activeScene: () => activeScene, gsap };
 
 // Resizes the renderer's drawing buffer to match the canvas's CSS-driven
 // display size (per https://threejs.org/manual/#en/responsive). Reading
@@ -290,27 +346,39 @@ function resizeToDisplaySize() {
 // The landing timeline is split into equal-length quarters via explicit
 // start-time positions, so each scroll quarter drives one phase:
 //   0-1  Phase 1: idle - free mouse-driven look (LandingScene.update() default)
-//   1-2  Phase 2: camera dives from z:1500 to z:0 and tilts to look down.
-//        Chapter two's text swap triggers partway through, at 1.7.
-//   PHASE3_START (2 + CHAPTER_STOPPAGE) to +1:
+//   1-3  Phase 2: camera dives from z:1500 to z:0 and tilts to look down.
+//        Stretched to a 2-unit duration (rather than matching the other
+//        phases' 1-unit width) so the dive reads as a slow descent instead of
+//        a fast drop - it borrows into the CHAPTER_STOPPAGE gap below, which
+//        was sitting idle over that same span anyway (nothing else runs
+//        there until PHASE3_START), so this doesn't cost any extra scroll
+//        budget. Chapter two's text swap triggers partway through, at 1.7.
+//   3 to PHASE3_START (2 + CHAPTER_STOPPAGE): a genuine held stop once the
+//        dive lands on z:0 - the camera sits still here (not just settling
+//        into place) before Phase 3 picks the scene back up.
+//   PHASE3_START to +1:
 //        Phase 3: sun swings low, camera flattens toward orthographic, the
 //        vertical boxes slide out of frame, the horizontal box collapses
 //        away. Held back past the original position 2 by CHAPTER_STOPPAGE so
-//        the chapter reveal above has scroll room to finish before this starts.
+//        the chapter reveal above (and now the z:0 stop above) has scroll
+//        room to finish before this starts.
 //   PHASE3_START + 1 to +2: Phase 4: the floor morphs into a small sphere
 function onload(){
 
-	// Phase 2
+	// Phase 2 - a 2-unit duration (not the usual 1) so the dive to z:0 reads
+	// as a slow, controlled descent rather than a fast drop. See the phase
+	// table above for why this doesn't need any extra scroll budget.
 	landingSceneTimeline.to(activeScene.camera.position, {
 		z: 0,
 		ease: 'power3.inOut',
-		duration: 1,
+		duration: 2,
 	}, 1);
 
-	// Chapter two's text swap fires at this timeline position - before z:0
-	// lands at 2 and well before Phase 3 (pushed out to PHASE3_START below)
-	// starts moving box4, so the reveal is fully resolved before anything
-	// else in the scene moves.
+	// Chapter two's text swap fires at this timeline position - while the
+	// dive above is still settling toward z:0 (which now lands at 3) but
+	// well before Phase 3 (pushed out to PHASE3_START below) starts moving
+	// box4, so the reveal is fully resolved before anything else in the
+	// scene moves.
 	const CHAPTER_TWO_TRIGGER = 1.7;
 
 	// Chapter one fades out gradually as the user scrolls through the dive -
@@ -366,9 +434,27 @@ function onload(){
 	// chapter reveal has scroll room to breathe before the scene continues.
 	const PHASE3_START = 2 + CHAPTER_STOPPAGE;
 
-	landingSceneTimeline.to(activeScene.directionalLight.position, {
+	// Explicit fromTo (not a plain .to()) so this doesn't depend on GSAP's
+	// implicit "from" - a plain .to() lazily captures its start value from
+	// whatever directionalLight.position currently holds the first time it
+	// renders, which invalidateOnRefresh (see this timeline's ScrollTrigger
+	// config) can force to happen again later, against whatever chapter
+	// four's own light orbit (further down in this function) last left the
+	// light at instead of its true original spot - the light would then
+	// reverse back toward that wrong, rotated position through chapters 3/2/1
+	// instead of its real starting point. Pinning both ends explicitly (z
+	// included, which this tween otherwise never touches and so would
+	// otherwise silently inherit whatever the orbit left it at) removes that
+	// dependency entirely.
+	const directionalLightInitialPosition = activeScene.directionalLight.position.clone();
+	landingSceneTimeline.fromTo(activeScene.directionalLight.position, {
+		x: directionalLightInitialPosition.x,
+		y: directionalLightInitialPosition.y,
+		z: directionalLightInitialPosition.z,
+	}, {
 		x: 0,
-		y:400,
+		y: 400,
+		z: directionalLightInitialPosition.z,
 		ease: 'power3.inOut',
 		duration: 1,
 	}, PHASE3_START);
@@ -476,6 +562,17 @@ function onload(){
 
 	landingSceneTimeline.call(() => {
 		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			// chapterTwoTimeline's reveal (and the scrubbed fade-out just above)
+			// both run over roughly a real second - a fast enough scroll can
+			// cross CHAPTER_TWO_TRIGGER and this trigger within less real time
+			// than that, so chapterTwoTimeline can still be mid-reveal here,
+			// fighting the fade-out tween over the same
+			// '.chapter-two-description' opacity and reading as chapter two
+			// and three's text overlapping. Snapping chapter two straight to
+			// its fully-hidden end state first guarantees a clean handoff
+			// into chapter three no matter how fast the scroll was.
+			chapterTwoTimeline.pause(0);
+			gsap.set('.chapter-two-description', { autoAlpha: 0 });
 			chapterThreeTimeline.play();
 		} else {
 			chapterThreeTimeline.pause();
@@ -582,7 +679,26 @@ function onload(){
 		duration: PHASE4_DURATION,
 		onUpdate: () => landingScene.camera.updateProjectionMatrix(),
 	}, PHASE4_START);
-	
+
+	// Fog thickens in as chapter four's wide orbit opens the view up. The
+	// default fog (near:3500, far:5700) never actually kicks in anywhere in
+	// this scene - everything from here through chapter five sits at most a
+	// couple thousand units from the camera (the only thing ever big enough
+	// to reach that band, the 10000-unit floor plane, has already morphed
+	// into a small sphere and hidden itself by PHASE4_START, see
+	// revealMorphCube). orbitStartOffset (captured above) is ~TARGET_Y_FINAL
+	// (2500 desktop / 1700 portrait) at the start of this orbit and closes to
+	// 0.28x that (~700/475) by its end, so near/far need to sit well inside
+	// that couple-thousand-unit range to read as anything: near below the
+	// orbit's closest approach so it's active for the whole chapter, far
+	// close enough above the orbit's starting distance that the reveal
+	// actually starts hazy and clears as the camera swoops in.
+	landingSceneTimeline.to(landingScene.scene.fog, {
+		near: 600,
+		far: 2500,
+		ease: 'power3.inOut',
+		duration: PHASE4_DURATION,
+	}, PHASE4_START);
 
 	// The red sphere morphs into a cube as one continuously-deforming mesh
 	// (see LandingScene's morph-cube geometry) rather than two objects
@@ -656,6 +772,20 @@ function onload(){
 		x: landingScene.gridToCubeScale,
 		y: wall3ShrinkScaleY,
 		z: landingScene.gridToCubeScale,
+		ease: 'power3.inOut',
+		duration: PHASE4_DURATION,
+	}, PHASE4_START);
+
+	// The hidden grid eases in from its extra-nudged starting position (see
+	// LandingScene's own hiddenGridRestPosition) to its real resting spot,
+	// over the same PHASE4_START/PHASE4_DURATION window as wall three's
+	// growth and the camera orbit below - so it settles into place alongside
+	// everything else, ending up at the exact same spot it always has by the
+	// time chapter four's sequence finishes.
+	landingSceneTimeline.to(landingScene.hiddenGrid.position, {
+		x: landingScene.hiddenGridRestPosition.x,
+		y: landingScene.hiddenGridRestPosition.y,
+		z: landingScene.hiddenGridRestPosition.z,
 		ease: 'power3.inOut',
 		duration: PHASE4_DURATION,
 	}, PHASE4_START);
@@ -849,11 +979,18 @@ function onload(){
 	// The directional light swings 90 degrees over the same span as the
 	// camera orbit above, so the shadows the grid casts on the shadow
 	// catcher (see LandingScene) visibly sweep around too rather than
-	// staying static while everything else moves. Unlike the camera's own
-	// orbit, this one doesn't need a live-captured start offset or the
-	// up-vector workaround above - the light's position/target are plain
-	// fixed constants (see LandingScene's init()), never touched by the
-	// idle look, so there's no degenerate-vector risk here to begin with.
+	// staying static while everything else moves. lightStartOffset is
+	// deliberately a fixed constant captured once, up front, from the
+	// light's true initial position (before Phase 3's own x:0/y:400 tween on
+	// directionalLight.position ever runs) - NOT live-captured the way the
+	// camera's orbitStartOffset/orbitStartUp are. That means this orbit
+	// always rotates from, and (scrolling back) resets straight to, the
+	// light's original initial position rather than wherever Phase 3 last
+	// left it - a deliberate hard reset right at the chapter 3/4 boundary
+	// (matching the other one-shot resets that happen at PHASE4_START, like
+	// the vertical boxes' removal and the hidden grid's reveal), not a bug -
+	// so chapter four's end lighting stays exactly as tuned regardless of
+	// what Phase 3 did to the light on the way in.
 	const lightOrbitAngle = Math.PI / 2; // "to the right" - flip the sign if it swings the wrong way
 	const lightTargetPosition = landingScene.directionalLight.target.position;
 	const lightStartOffset = landingScene.directionalLight.position.clone().sub(lightTargetPosition);
@@ -965,6 +1102,273 @@ function onload(){
 		ease: 'power2.inOut',
 		duration: sphereMoveDuration,
 	}, PHASE5_START);
+
+	// Chapter three fades out over the same scrubbed window as the camera
+	// orbit above, so "Exploration" is fully gone by the time that orbit
+	// settles at PHASE5_START - mirroring how chapter two fades out ahead of
+	// CHAPTER_THREE_TRIGGER, just against the orbit instead of a roll.
+	landingSceneTimeline.to('.chapter-three-description', {
+		autoAlpha: 0,
+		ease: 'power1.inOut',
+		duration: PHASE4_DURATION,
+	}, PHASE4_START);
+
+	// Chapter four appears the instant the camera orbit above settles, right
+	// before the hero cube's own final roll (just below) kicks off - not
+	// after it, so the text is already up as that last beat plays out.
+	const CHAPTER_FOUR_TRIGGER = PHASE5_START;
+
+	const chapterFourTimeline = gsap.timeline({ paused: true })
+		.to('.chapter-four-description', { autoAlpha: 1, ease: 'power1.inOut', duration: 1 }, 0)
+		.to('.split-reveal-four .char', { yPercent: 0, ease: 'power1.inOut', duration: 1, stagger: .001 }, 0);
+
+	const CHAPTER_FOUR_HIDE_DURATION = .2;
+
+	landingSceneTimeline.call(() => {
+		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			chapterFourTimeline.play();
+		} else {
+			chapterFourTimeline.pause();
+			gsap.to('.chapter-four-description', {
+				autoAlpha: 0,
+				ease: 'power1.in',
+				duration: CHAPTER_FOUR_HIDE_DURATION,
+				onComplete: () => chapterFourTimeline.pause(0),
+			});
+		}
+	}, null, CHAPTER_FOUR_TRIGGER);
+
+	// Chapter 5 - held back by CHAPTER_FIVE_STOPPAGE past where the hero
+	// cube's final roll (Phase 5 extension above) finishes, same "give the
+	// reader scroll room" reasoning as PHASE3_START/PHASE4_START's own gaps.
+	const PHASE6_START = PHASE5_START + sphereMoveDuration + CHAPTER_FIVE_STOPPAGE;
+
+	// FOV lerps back down to the near-orthographic 12 it held earlier in
+	// Phase 3, flattening the perspective again for chapter five's close.
+	landingSceneTimeline.to(landingScene.camera, {
+		fov: 12,
+		ease: 'power3.inOut',
+		duration: CHAPTER_FIVE_DURATION,
+		onUpdate: () => landingScene.camera.updateProjectionMatrix(),
+	}, PHASE6_START);
+
+	// Fog pulls back out for chapter five's close - the orbit's own camera
+	// lift (orbit2CameraLift, below) pushes the camera much farther from the
+	// grid, so easing the fog back out too keeps the pulled-back finale
+	// reading clearer than chapter four's thicker atmosphere, not hazier.
+	landingSceneTimeline.to(landingScene.scene.fog, {
+		near: 6000,
+		far: 11000,
+		ease: 'power2.inOut',
+		duration: CHAPTER_FIVE_DURATION,
+	}, PHASE6_START);
+
+	// The orbit continues its sweep from exactly where chapter four's own
+	// orbit (above) left off, rather than restarting from a fresh base -
+	// orbitStartOffset/orbitStartUp are the same vectors chapter four's orbit
+	// captured at its own start, so re-applying angle/tilt to them here picks
+	// the motion back up seamlessly. Pivot and radius stay put at chapter
+	// four's final values (orbitPivot already sits on orbitPivotEnd, and
+	// orbit2RadiusFactor matches the first orbit's own t:1 radiusFactor) -
+	// only angle and tilt keep moving, sweeping the remaining stretch from
+	// orbitAngle to -Math.PI/2 while the tilt eases back out from
+	// orbitTiltAngle to a flatter, more top-down 0.
+	const orbit2AngleStart = orbitAngle;
+	const orbit2AngleEnd = -Math.PI / 2;
+	const orbit2TiltStart = orbitTiltAngle;
+	const orbit2TiltEnd = 0;
+	const orbit2RadiusFactor = 1 - orbitRadiusCloseFactor;
+	// Extra world units the camera climbs straight up along Y on top of the
+	// orbit/tilt above, so the grid pulls back and reads much smaller in
+	// frame rather than just rotating in place - added directly to the
+	// orbit's own computed position (not folded into orbitOffset/radiusFactor)
+	// since it's a plain vertical pull-back, not part of the pivot-relative
+	// sweep. Tune to taste.
+	const orbit2CameraLift = 4000;
+	const orbit2 = { t: 0 };
+	landingSceneTimeline.to(orbit2, {
+		t: 1,
+		ease: 'power2.inOut',
+		duration: CHAPTER_FIVE_DURATION,
+		onUpdate: () => {
+			const angle = THREE.MathUtils.lerp(orbit2AngleStart, orbit2AngleEnd, orbit2.t);
+			const tiltAmount = THREE.MathUtils.lerp(orbit2TiltStart, orbit2TiltEnd, orbit2.t);
+
+			orbitOffset.copy(orbitStartOffset).applyAxisAngle(orbitAxis, angle);
+			orbitUp.copy(orbitStartUp).applyAxisAngle(orbitAxis, angle);
+			// orbitUp is never degenerate here the way it could be at chapter
+			// four's own orbit's t:0 (see that tween's own comment) - angle is
+			// already offset by orbit2AngleStart (orbitAngle), so orbitUp
+			// always carries a real horizontal component to build a tilt axis
+			// from, no zero-vector guard needed.
+			orbitTiltAxis.crossVectors(orbitAxis, orbitUp).normalize();
+			orbitOffset.applyAxisAngle(orbitTiltAxis, tiltAmount);
+			orbitUp.applyAxisAngle(orbitTiltAxis, tiltAmount);
+
+			landingScene.camera.position
+				.copy(orbitOffset)
+				.multiplyScalar(orbit2RadiusFactor)
+				.add(orbitPivot);
+			landingScene.camera.position.y += orbit2CameraLift * orbit2.t;
+			landingScene.camera.up.copy(orbitUp);
+			landingScene.camera.lookAt(orbitPivot);
+		},
+	}, PHASE6_START);
+
+	// The grid tiles, the three walls (now cube-tile rows themselves, see
+	// chapter four above) and the hero cube all flatten into thin bars, read
+	// nearly straight-down through the pull-back above - solid cubes
+	// collapsing into a field of flat cards/lines rather than staying
+	// volumetric as the camera recedes. This squashes local X: the
+	// hiddenGrid/wall groups carry a rotation.x of PI/2 (see LandingScene's
+	// init()/createSplitWall) that swaps their local Y onto world Z and
+	// local Z onto world Y (straight up, invisible to this near-top-down
+	// camera) but leaves local X alone, so it's the one axis that actually
+	// reads as bar-width on screen from this angle.
+	const chapterFiveSquash = 0.08; // fraction of a tile's native width the flattened bars shrink to
+	// How much further apart (from the grid's own local center) each tile's
+	// position spreads as it flattens, so the bars read as distinct marks
+	// with real gaps rather than drawing together into a denser cluster. Split
+	// per axis rather than one shared factor: local X is init()'s column
+	// offset (col loop) and, per the squash comment above, is also the axis
+	// that reads as screen-horizontal - kept close to native spacing (1, no
+	// extra growth) so columns stay tight, while local Y (row offset, reads
+	// as screen-vertical) still spreads further apart.
+	const chapterFiveColumnSpacingGrowth = 1;
+	const chapterFiveRowSpacingGrowth = 1.6;
+	// Total time spread, across the whole squash, over which each
+	// hiddenGrid instance's own flatten is staggered - see the per-instance
+	// loop below.
+	const chapterFiveStaggerSpan = CHAPTER_FIVE_DURATION * 0.5;
+
+	// Each hiddenGrid instance gets its own small proxy tween (rather than
+	// one tween driving the mesh's shared object-level scale, the way
+	// chapter four's own grow/shrink tweens do) so both the stagger and the
+	// spacing growth above can vary per-tile - group-level scale can't do
+	// either, since it applies identically, and at the same instant, to
+	// every instance at once. Position is scaled directly here too (instead
+	// of being left to hiddenGrid's own group scale, which never changes
+	// through this phase), so the spread-apart above can move independently
+	// of the tiles' own shrinking width.
+	const gridInstanceCount = landingScene.hiddenGridBasePositions.length;
+	const gridInstanceDuration = CHAPTER_FIVE_DURATION - chapterFiveStaggerSpan;
+	const gridSquashPosition = new THREE.Vector3();
+	const gridSquashScale = new THREE.Vector3();
+	const gridSquashQuaternion = new THREE.Quaternion(); // instances never rotate individually - stays identity
+	const gridSquashMatrix = new THREE.Matrix4();
+	landingScene.hiddenGridBasePositions.forEach((basePosition, i) => {
+		// Staggered by index (construction's column-major col/row loop - see
+		// LandingScene's init()), so the flatten sweeps across the grid
+		// column by column rather than every tile moving in lockstep.
+		const offset = gridInstanceCount > 1 ? (i / (gridInstanceCount - 1)) * chapterFiveStaggerSpan : 0;
+		const proxy = { t: 0 };
+		landingSceneTimeline.to(proxy, {
+			t: 1,
+			ease: 'power3.inOut',
+			duration: gridInstanceDuration,
+			onUpdate: () => {
+				gridSquashPosition.set(
+					basePosition.x * THREE.MathUtils.lerp(1, chapterFiveColumnSpacingGrowth, proxy.t),
+					basePosition.y * THREE.MathUtils.lerp(1, chapterFiveRowSpacingGrowth, proxy.t),
+					basePosition.z,
+				);
+				gridSquashScale.set(THREE.MathUtils.lerp(1, chapterFiveSquash, proxy.t), 1, 1);
+				gridSquashMatrix.compose(gridSquashPosition, gridSquashQuaternion, gridSquashScale);
+				landingScene.hiddenGrid.setMatrixAt(i, gridSquashMatrix);
+				landingScene.hiddenGrid.instanceMatrix.needsUpdate = true;
+			},
+		}, PHASE6_START + offset);
+	});
+
+	// Rather than aligning the three walls' own flatten/spread with the
+	// grid's own per-tile rhythm above (fiddly, given they're three separate
+	// groups rather than one instanced set), they instead just collapse away
+	// entirely - scaling each wall's group down to nothing on X, which
+	// crushes its own geometry down to a flat plane. Scale alone isn't
+	// enough to actually hide it, though: collapsing a single axis leaves a
+	// plane, not a point, and whether that plane still reads as visible
+	// depends entirely on how edge-on it happens to be to the camera at this
+	// exact moment in the orbit - here it still faces the camera rather than
+	// hiding edge-on to it, so it's backed by an explicit visibility toggle
+	// below rather than counting on the collapse alone. Quicker than the
+	// grid/cube's own squash (a fraction of CHAPTER_FIVE_DURATION) so the
+	// walls are gone early, out of the way before the grid/cube's own
+	// flatten finishes.
+	const chapterFiveWallVanishDuration = CHAPTER_FIVE_DURATION * 0.2;
+	landingScene.walls.forEach((wall) => {
+		let wallHidden = false;
+		landingSceneTimeline.to(wall.group.scale, {
+			x: 0,
+			ease: 'power2.in',
+			duration: chapterFiveWallVanishDuration,
+			onUpdate: () => {
+				// Explicit visibility toggle (see comment above) rather than
+				// trusting the collapsed scale alone to hide it - also drops
+				// castShadow, so PCF shadow-map filtering can't smear a faint
+				// shadow off the now-degenerate geometry either. Restored the
+				// instant scale ticks back up on a reverse scroll.
+				const shouldHide = wall.group.scale.x <= 0.001;
+				if (shouldHide !== wallHidden) {
+					wallHidden = shouldHide;
+					wall.group.visible = !shouldHide;
+					wall.topHalf.castShadow = !shouldHide;
+					wall.bottomHalf.castShadow = !shouldHide;
+				}
+			},
+		}, PHASE6_START);
+	});
+
+	// Hero cube flattens on the same local X, landing on the exact same
+	// absolute world-unit thickness as the grid/wall tiles above rather than
+	// just chapterFiveSquash's own fraction. Its own Phase 5 growth (scale
+	// 1.5, see above) means it can't just reuse chapterFiveSquash directly
+	// the way the grid tiles do (whose pre-squash scale, gridToCubeScale,
+	// already nets out to exactly cubeBaseSize) - dividing by that same 1.5
+	// here cancels Phase 5's growth back out first, so this also lands on
+	// cubeBaseSize * chapterFiveSquash, matching the grid/wall tiles' own
+	// final size instead of ending up 1.5x thicker than them.
+	landingSceneTimeline.to(landingScene.cube.scale, {
+		x: chapterFiveSquash / 1.5,
+		ease: 'power3.inOut',
+		duration: CHAPTER_FIVE_DURATION,
+	}, PHASE6_START);
+
+	// Chapter four fades out over the same window as chapter five's camera
+	// move above, mirroring how each earlier chapter fades out ahead of the
+	// next one's own trigger.
+	landingSceneTimeline.to('.chapter-four-description', {
+		autoAlpha: 0,
+		ease: 'power1.inOut',
+		duration: CHAPTER_FIVE_DURATION,
+	}, PHASE6_START);
+
+	// Chapter five appears once its own camera move above settles.
+	const CHAPTER_FIVE_TRIGGER = PHASE6_START + CHAPTER_FIVE_DURATION;
+
+	const chapterFiveTimeline = gsap.timeline({ paused: true })
+		.to('.chapter-five-description', { autoAlpha: 1, ease: 'power1.inOut', duration: 1 }, 0)
+		.to('.split-reveal-five .char', { yPercent: 0, ease: 'power1.inOut', duration: 1, stagger: .001 }, 0);
+
+	const CHAPTER_FIVE_HIDE_DURATION = .2;
+
+	landingSceneTimeline.call(() => {
+		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			chapterFiveTimeline.play();
+		} else {
+			chapterFiveTimeline.pause();
+			gsap.to('.chapter-five-description', {
+				autoAlpha: 0,
+				ease: 'power1.in',
+				duration: CHAPTER_FIVE_HIDE_DURATION,
+				onComplete: () => chapterFiveTimeline.pause(0),
+			});
+		}
+	}, null, CHAPTER_FIVE_TRIGGER);
+
+	// See CHAPTER_FIVE_TAIL's own comment above - this dummy tween is the
+	// scroll room that constant reserves, keeping CHAPTER_FIVE_TRIGGER a
+	// genuine interior point instead of the timeline's own last moment.
+	landingSceneTimeline.to({}, { duration: CHAPTER_FIVE_TAIL }, CHAPTER_FIVE_TRIGGER);
 
 };
 

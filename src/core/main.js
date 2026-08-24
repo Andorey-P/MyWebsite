@@ -976,24 +976,39 @@ function onload(){
 	const orbitOffset = new THREE.Vector3();
 	const orbitUp = new THREE.Vector3();
 	const orbitTiltAxis = new THREE.Vector3();
-	// The directional light swings 90 degrees over the same span as the
-	// camera orbit above, so the shadows the grid casts on the shadow
-	// catcher (see LandingScene) visibly sweep around too rather than
-	// staying static while everything else moves. lightStartOffset is
-	// deliberately a fixed constant captured once, up front, from the
-	// light's true initial position (before Phase 3's own x:0/y:400 tween on
-	// directionalLight.position ever runs) - NOT live-captured the way the
-	// camera's orbitStartOffset/orbitStartUp are. That means this orbit
-	// always rotates from, and (scrolling back) resets straight to, the
-	// light's original initial position rather than wherever Phase 3 last
-	// left it - a deliberate hard reset right at the chapter 3/4 boundary
-	// (matching the other one-shot resets that happen at PHASE4_START, like
-	// the vertical boxes' removal and the hidden grid's reveal), not a bug -
-	// so chapter four's end lighting stays exactly as tuned regardless of
-	// what Phase 3 did to the light on the way in.
+	// The directional light swings over the same span as the camera orbit
+	// above, so the shadows the grid casts on the shadow catcher (see
+	// LandingScene) visibly sweep around too rather than staying static
+	// while everything else moves. Both ends of that swing are fixed
+	// constants computed once, up front, NOT live-captured the way the
+	// camera's orbitStartOffset/orbitStartUp are:
+	// - lightStartOffset is derived from where Phase 3's own x:0/y:400
+	//   tween on directionalLight.position actually leaves the light (it
+	//   holds there, untouched, through the rest of chapter three) - an
+	//   earlier version derived it from the light's true pre-Phase-3
+	//   position instead, which visibly snapped against what chapter three
+	//   actually displays right at the chapter 3/4 boundary, in both
+	//   scroll directions.
+	// - lightEndOffset is still derived from that true pre-Phase-3 position
+	//   (directionalLightInitialPosition, also fixed, see Phase 3 above)
+	//   rotated by the originally-tuned lightOrbitAngle - preserving
+	//   chapter four's tuned end-of-orbit lighting exactly as designed,
+	//   regardless of where the start moved to above.
+	// Position is lerped linearly between these two fixed offsets (rather
+	// than rotated, as the camera orbit above is) since the two no longer
+	// share a common radius/rotation relationship - a rotation formula
+	// can't hit both a chapter-3-matching start and the pre-tuned end at
+	// once, while a lerp guarantees both endpoints exactly. Only the
+	// offset's direction from lightTargetPosition matters for a
+	// directional light, so the straight-line (rather than arced) path
+	// between them isn't visually meaningful.
 	const lightOrbitAngle = Math.PI / 2; // "to the right" - flip the sign if it swings the wrong way
 	const lightTargetPosition = landingScene.directionalLight.target.position;
-	const lightStartOffset = landingScene.directionalLight.position.clone().sub(lightTargetPosition);
+	const chapterFourLightStartPosition = new THREE.Vector3(0, 400, directionalLightInitialPosition.z);
+	const lightStartOffset = chapterFourLightStartPosition.clone().sub(lightTargetPosition);
+	const lightEndOffset = directionalLightInitialPosition.clone()
+		.sub(lightTargetPosition)
+		.applyAxisAngle(orbitAxis, lightOrbitAngle * 0.8);
 	const lightOffset = new THREE.Vector3();
 	landingSceneTimeline.to(orbit, {
 		t: 1,
@@ -1063,7 +1078,7 @@ function onload(){
 			landingScene.camera.up.copy(orbitUp);
 			landingScene.camera.lookAt(orbitPivot);
 
-			lightOffset.copy(lightStartOffset).applyAxisAngle(orbitAxis, lightOrbitAngle * orbit.t * 0.8);
+			lightOffset.lerpVectors(lightStartOffset, lightEndOffset, orbit.t);
 			landingScene.directionalLight.position.copy(lightTargetPosition).add(lightOffset);
 
 			// Shadow catcher fades in over the same span instead of popping
@@ -1235,7 +1250,7 @@ function onload(){
 	// extra growth) so columns stay tight, while local Y (row offset, reads
 	// as screen-vertical) still spreads further apart.
 	const chapterFiveColumnSpacingGrowth = 1;
-	const chapterFiveRowSpacingGrowth = 1.6;
+	const chapterFiveRowSpacingGrowth = 2.5;
 	// Total time spread, across the whole squash, over which each
 	// hiddenGrid instance's own flatten is staggered - see the per-instance
 	// loop below.

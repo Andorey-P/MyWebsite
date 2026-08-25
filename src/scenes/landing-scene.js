@@ -10,6 +10,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ViewHelper } from 'three/addons/helpers/ViewHelper.js';
 
 
 // Vertical FOV the scene was hand-tuned against, on a 16:9 desktop viewport.
@@ -337,7 +338,7 @@ export default class LandingScene extends BaseThreeJS{
     // has no part in.
     this.hiddenGrid.visible = false;
     this.hiddenGrid.castShadow = true;
-    this.hiddenGrid.receiveShadow = true;
+    // this.hiddenGrid.receiveShadow = true;
     this.hiddenGrid.position.copy(this.walls[2].group.position);
     // Uniform scale (not wall three's own (0.4, 1, 0.4) group.scale) so each
     // tile renders as an actual cube matching the hero cube's size exactly,
@@ -495,6 +496,63 @@ export default class LandingScene extends BaseThreeJS{
     // this.scene.add(shadowCameraHelper);
 
     // this.initPostprocessing();
+
+    this.addWorldAxesGizmo();
+  }
+
+  // Persistent world-space orientation widget, pinned to the bottom-right
+  // corner of the viewport (ViewHelper's own fixed spot - see its render())
+  // rather than sitting somewhere in the 3D scene, so it's always in frame
+  // and always shows the *camera's current* read on world X/Y/Z, however far
+  // the chapter's own camera move has rotated/dollied by that point - a
+  // gizmo placed in world space would just go out of frame or behind fog
+  // once the camera moves on.
+  addWorldAxesGizmo() {
+    this.viewHelper = new ViewHelper(this.camera, this.renderer.domElement);
+    this.viewHelper.setLabels('X', 'Y', 'Z');
+    this.recolorWorldAxesGizmo(PALETTE.clay); // replacing ViewHelper's default RGB axis colors with the site's muted orange accent
+  }
+
+  // ViewHelper hardcodes red/green/blue per-axis with no public color API - the
+  // axis meshes take a plain material.color set, but the labeled sprites bake
+  // their color into a canvas texture at construction time, so those need a
+  // freshly drawn texture rather than a property update.
+  recolorWorldAxesGizmo(hexColor) {
+    const color = new THREE.Color(hexColor);
+
+    for (const child of this.viewHelper.children) {
+      if (child.isMesh) {
+        child.material.color.set(color);
+      } else if (child.isSprite && child.userData.type?.startsWith('pos')) {
+        const label = child.userData.type.slice(-1); // 'posX' -> 'X'
+        child.material.map.dispose();
+        child.material.dispose();
+        child.material = this.buildAxisLabelSpriteMaterial(color, label);
+      }
+    }
+  }
+
+  buildAxisLabelSpriteMaterial(color, text) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+
+    const context = canvas.getContext('2d');
+    context.beginPath();
+    context.arc(32, 32, 14, 0, 2 * Math.PI);
+    context.closePath();
+    context.fillStyle = color.getStyle();
+    context.fill();
+
+    context.font = '24px Arial';
+    context.textAlign = 'center';
+    context.fillStyle = '#000000';
+    context.fillText(text, 32, 41);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+
+    return new THREE.SpriteMaterial({ map: texture, toneMapped: false });
   }
 
   update() {

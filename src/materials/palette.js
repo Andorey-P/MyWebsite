@@ -9,6 +9,7 @@ export const PALETTE = {
   slate: '#3d5c74',   // accent - dusty desaturated navy/steel blue
   ochre: '#d3a233',   // accent - muted mustard/ochre gold
   sage: '#7c8a6a',    // accent - muted sage green
+  clay: '#d05135',    // accent - header active-link's brick, ~10% brighter, for a small persistent UI accent (world-axes gizmo)
 
   // Deliberately outside the muted system: the one saturated "signal" color,
   // reserved for the sphere-turns-red beat (Teorema poster reference) - it

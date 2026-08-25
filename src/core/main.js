@@ -219,6 +219,20 @@ function renderActiveScene() {
 	} else {
 		renderer.render(activeScene.scene, activeScene.camera);
 	}
+	// World-axes gizmo widget (see LandingScene's addWorldAxesGizmo) drawn
+	// on top, in its own small viewport.
+	// ViewHelper.render() calls renderer.render() internally, which clears
+	// the FULL canvas by default (autoClear only restricts what gets drawn,
+	// not what gets cleared, and there's no scissor test around its own
+	// setViewport) - without disabling autoClear just for this call, that
+	// second render wipes the scene render just above it, leaving only the
+	// gizmo's own small corner visible.
+	if (activeScene.viewHelper) {
+		const prevAutoClear = renderer.autoClear;
+		renderer.autoClear = false;
+		activeScene.viewHelper.render(renderer);
+		renderer.autoClear = prevAutoClear;
+	}
 }
 
 // Render loop animation
@@ -288,6 +302,27 @@ const CHAPTER_FIVE_DURATION = 1.5;
 // sitting on top of it instead of arriving from past it. This tail gives
 // scrolling back something real to cross through.
 const CHAPTER_FIVE_TAIL = 0.5;
+// Small pause after chapter five's own row finishes assembling and its title
+// reveals - same "give the reader scroll room" pattern as
+// CHAPTER_STOPPAGE/CHAPTER_FOUR_STOPPAGE/CHAPTER_FIVE_STOPPAGE above - held
+// before the hero cube tips over and starts the domino fall below (see
+// DOMINO_FALL_START in onload()).
+const DOMINO_FALL_STOPPAGE = 1;
+// Scrubbed length of the domino fall's own scroll-driven cascade below -
+// needs enough room that 43 pieces (hero cube + 42 grid tiles) toppling in a
+// staggered wave still reads as individual events, not a blur. Declared up
+// here for the same reason as PHASE4_DURATION above - the scrollTrigger
+// `end` needs it before onload() ever runs.
+const DOMINO_FALL_DURATION = 3;
+// Chapter six opens with every fallen piece (hero cube + 42 grid tiles) -
+// still lying where DOMINO_FALL_DURATION's topple above left them -
+// scattering downward out of frame before chapter six's own content
+// appears. Each piece gets its own randomized start offset within this span
+// rather than DOMINO_FALL_DURATION's index-ordered wave, so the clearing
+// reads as loose debris settling out of view, not another synced cascade.
+// Declared up here for the same reason as DOMINO_FALL_DURATION above - the
+// scrollTrigger `end` needs it before onload() ever runs.
+const DOMINO_CLEAR_DURATION = 2;
 
 // Timeline for events in the landing section
 const landingSceneTimeline = gsap.timeline({
@@ -304,7 +339,7 @@ const landingSceneTimeline = gsap.timeline({
 		// further CHAPTER_STOPPAGE-driven pad is added on top so the chapter
 		// reveal below gets genuine extra scroll room, not room borrowed from
 		// later phases. Recomputed on resize since it reads window.innerHeight.
-		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION + sphereMoveDuration + CHAPTER_FIVE_STOPPAGE + CHAPTER_FIVE_DURATION + CHAPTER_FIVE_TAIL)),
+		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION + sphereMoveDuration + CHAPTER_FIVE_STOPPAGE + CHAPTER_FIVE_DURATION + DOMINO_FALL_STOPPAGE + DOMINO_FALL_DURATION + CHAPTER_FIVE_TAIL + DOMINO_CLEAR_DURATION)),
 		invalidateOnRefresh: true,
 		scrub: 1, // lower scrub means the camera reacts more directly to scrolling
 		markers: false
@@ -582,6 +617,15 @@ function onload(){
 				duration: CHAPTER_THREE_HIDE_DURATION,
 				onComplete: () => chapterThreeTimeline.pause(0),
 			});
+			// Mirrors the forward branch's handoff above: leaving chapter three's
+			// zone on a scroll-back re-enters chapter two's zone, but chapter two
+			// only ever gets shown by a forward crossing of its own
+			// CHAPTER_TWO_TRIGGER - if the scroll-back stops before reaching that
+			// (still within chapter two's zone), that trigger never fires and
+			// chapter two's text never reappears. Playing it here instead, right
+			// as chapter three's zone is left, guarantees the zone the scroll
+			// lands in always has its own text showing regardless of scroll speed.
+			chapterTwoTimeline.play();
 		}
 	}, null, CHAPTER_THREE_TRIGGER);
 
@@ -790,6 +834,58 @@ function onload(){
 		duration: PHASE4_DURATION,
 	}, PHASE4_START);
 
+	// On top of the whole-group slide-in above, each individual tile starts
+	// scattered out from the grid's own center and converges into its exact
+	// resting slot (hiddenGridBasePositions, untouched) by the time this
+	// window ends - loosely the reverse of chapter five's own per-tile move
+	// into a row (see its domino* tweens below), and position-only: unlike
+	// that later move, no scale change is layered on here, so a tile's own
+	// size never changes, only how far its local position sits from the
+	// grid's center.
+	const gridAssembleSpreadGrowth = 2; // how many multiples of a tile's own base offset it starts scattered out to - tune to taste
+	const gridAssembleStaggerSpan = PHASE4_DURATION * 0.5;
+	const gridAssembleInstanceCount = landingScene.hiddenGridBasePositions.length;
+	const gridAssembleInstanceDuration = PHASE4_DURATION - gridAssembleStaggerSpan;
+	const gridAssemblePosition = new THREE.Vector3();
+	const gridAssembleScale = new THREE.Vector3(1, 1, 1); // never touched - this pass is position-only
+	const gridAssembleQuaternion = new THREE.Quaternion(); // instances never rotate individually - stays identity
+	const gridAssembleMatrix = new THREE.Matrix4();
+	landingScene.hiddenGridBasePositions.forEach((basePosition, i) => {
+		// Same index-order stagger as chapter five's own per-tile tween below,
+		// so both passes sweep across the grid the same way.
+		const offset = gridAssembleInstanceCount > 1 ? (i / (gridAssembleInstanceCount - 1)) * gridAssembleStaggerSpan : 0;
+		const proxy = { t: 0 };
+		// Explicit fromTo (not a plain .to()) for the same reason as this
+		// timeline's directionalLight tween above: a plain .to() lazily
+		// captures its start value from whatever proxy.t currently holds the
+		// first time it renders, and invalidateOnRefresh (this timeline's own
+		// ScrollTrigger config) can force that capture to happen again later -
+		// mid-scroll, on whatever partial t a refresh happens to land on -
+		// instead of the tile's true starting (fully scattered) pose. That
+		// showed up as a one-time pop to a wrong position on the very first
+		// scroll through this section (refresh landing mid-transition, before
+		// the timeline had ever settled) which then never recurred once the
+		// bad "from" had already been baked in. Pinning t:0 explicitly removes
+		// the dependency on lazy capture entirely.
+		landingSceneTimeline.fromTo(proxy, {
+			t: 0,
+		}, {
+			t: 1,
+			ease: 'power3.inOut',
+			duration: gridAssembleInstanceDuration,
+			onUpdate: () => {
+				gridAssemblePosition.set(
+					THREE.MathUtils.lerp(basePosition.x * gridAssembleSpreadGrowth, basePosition.x, proxy.t),
+					THREE.MathUtils.lerp(basePosition.y * gridAssembleSpreadGrowth, basePosition.y, proxy.t),
+					basePosition.z,
+				);
+				gridAssembleMatrix.compose(gridAssemblePosition, gridAssembleQuaternion, gridAssembleScale);
+				landingScene.hiddenGrid.setMatrixAt(i, gridAssembleMatrix);
+				landingScene.hiddenGrid.instanceMatrix.needsUpdate = true;
+			},
+		}, PHASE4_START + offset);
+	});
+
 	// The cube detaches from the sphere's resting spot and slides over to
 	// wall three's gap - captured with the same threshold-latch pattern as
 	// the camera orbit below (rather than a plain .to() on cube.position)
@@ -951,8 +1047,8 @@ function onload(){
 	// update()'s idle mouse-look would otherwise fight this every frame (it
 	// lerps camera position back toward its own idle target), so it's locked
 	// via landingScene.lockIdleLook for the duration.
-	const orbitRadiusCloseFactor = .72; // fraction of the starting distance-to-pivot closed by the end
-	const orbitAngle = -Math.PI / 2.5; // sweep direction - flip the sign if the grid ends up rotating the wrong way
+	const orbitRadiusCloseFactor = .65; // fraction of the starting distance-to-pivot closed by the end
+	const orbitAngle = -Math.PI / 2; // sweep direction - flip the sign if the grid ends up rotating the wrong way
 	const orbitAxis = new THREE.Vector3(0, 1, 0);
 	// The orbit above only changes azimuth (rotation around the vertical
 	// axis), which keeps the camera at whatever elevation the idle look
@@ -964,7 +1060,7 @@ function onload(){
 	// the pivot recentering above and made the whole move read messy - so it
 	// resolves into a 3/4 view with real depth (cube's side faces visible)
 	// right as the orbit/dolly settle, rather than fighting them mid-swing.
-	const orbitTiltAngle = THREE.MathUtils.degToRad(-45); // flip the sign if this tilts toward more top-down instead of less
+	const orbitTiltAngle = THREE.MathUtils.degToRad(0); // flip the sign if this tilts toward more top-down instead of less
 	const orbitPivotEnd = new THREE.Vector3()
 		.addVectors(landingScene.hiddenGrid.position, wall3.group.position)
 		.multiplyScalar(0.5);
@@ -1141,6 +1237,14 @@ function onload(){
 
 	landingSceneTimeline.call(() => {
 		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			// Same fast-scroll handoff guard as CHAPTER_THREE_TRIGGER above -
+			// without snapping chapter three straight to its hidden end state
+			// first, a scroll fast enough to cross both triggers within less
+			// real time than chapterThreeTimeline's own reveal/fade-out takes
+			// leaves it still mid-animation here, fighting chapter four's
+			// fade-in over the same window and reading as overlapping text.
+			chapterThreeTimeline.pause(0);
+			gsap.set('.chapter-three-description', { autoAlpha: 0 });
 			chapterFourTimeline.play();
 		} else {
 			chapterFourTimeline.pause();
@@ -1150,6 +1254,8 @@ function onload(){
 				duration: CHAPTER_FOUR_HIDE_DURATION,
 				onComplete: () => chapterFourTimeline.pause(0),
 			});
+			// Same re-entry guard as CHAPTER_THREE_TRIGGER's reverse branch above.
+			chapterThreeTimeline.play();
 		}
 	}, null, CHAPTER_FOUR_TRIGGER);
 
@@ -1199,7 +1305,25 @@ function onload(){
 	// orbit's own computed position (not folded into orbitOffset/radiusFactor)
 	// since it's a plain vertical pull-back, not part of the pivot-relative
 	// sweep. Tune to taste.
-	const orbit2CameraLift = 4000;
+	const orbit2CameraLift = 2000;
+	// The domino row's own finished position has nothing to do with
+	// orbitPivotEnd (roughly wall three/hiddenGrid's own spot, which is all
+	// this pivot otherwise tracks) - the hero cube's slide plus every
+	// tile's own spacing walks the whole assembly well off to one screen
+	// side, and lower in frame than the pivot's own height, so framing on
+	// the pivot alone left the row pinned low and off-center instead of
+	// composed in the shot. This pans the pivot itself (which drags BOTH
+	// the camera's orbit position and its lookAt target the same amount,
+	// since both are built from it below - a true pan, not just a turn)
+	// toward the row's actual center - ramped in via orbit2.t so it doesn't
+	// jump at the chapter four/five boundary. Tune to taste; recenterUp is
+	// deliberately well short of what would put the row at true screen
+	// center - "up a little, not too much" per the brief.
+	const chapterFiveRecenterRight = 200;
+	const chapterFiveRecenterUp = -150;
+	const chapterFiveScreenRight = new THREE.Vector3();
+	const chapterFiveScreenUp = new THREE.Vector3();
+	const orbit2Pivot = new THREE.Vector3();
 	const orbit2 = { t: 0 };
 	landingSceneTimeline.to(orbit2, {
 		t: 1,
@@ -1220,76 +1344,278 @@ function onload(){
 			orbitOffset.applyAxisAngle(orbitTiltAxis, tiltAmount);
 			orbitUp.applyAxisAngle(orbitTiltAxis, tiltAmount);
 
+			// One-frame-stale screen directions (last frame's camera matrix,
+			// since this frame's position/lookAt haven't been set yet below) -
+			// same trade-off the domino tiles' own dominoCameraRight makes,
+			// and just as imperceptible here given how gradually orbit2 turns.
+			landingScene.camera.updateMatrixWorld();
+			chapterFiveScreenRight.setFromMatrixColumn(landingScene.camera.matrixWorld, 0).normalize();
+			chapterFiveScreenUp.setFromMatrixColumn(landingScene.camera.matrixWorld, 1).normalize();
+			orbit2Pivot.copy(orbitPivot)
+				.addScaledVector(chapterFiveScreenRight, chapterFiveRecenterRight * orbit2.t)
+				.addScaledVector(chapterFiveScreenUp, chapterFiveRecenterUp * orbit2.t);
+
 			landingScene.camera.position
 				.copy(orbitOffset)
 				.multiplyScalar(orbit2RadiusFactor)
-				.add(orbitPivot);
+				.add(orbit2Pivot);
 			landingScene.camera.position.y += orbit2CameraLift * orbit2.t;
 			landingScene.camera.up.copy(orbitUp);
-			landingScene.camera.lookAt(orbitPivot);
+			landingScene.camera.lookAt(orbit2Pivot);
+
 		},
 	}, PHASE6_START);
 
-	// The grid tiles, the three walls (now cube-tile rows themselves, see
-	// chapter four above) and the hero cube all flatten into thin bars, read
-	// nearly straight-down through the pull-back above - solid cubes
-	// collapsing into a field of flat cards/lines rather than staying
-	// volumetric as the camera recedes. This squashes local X: the
-	// hiddenGrid/wall groups carry a rotation.x of PI/2 (see LandingScene's
-	// init()/createSplitWall) that swaps their local Y onto world Z and
-	// local Z onto world Y (straight up, invisible to this near-top-down
-	// camera) but leaves local X alone, so it's the one axis that actually
-	// reads as bar-width on screen from this angle.
-	const chapterFiveSquash = 0.08; // fraction of a tile's native width the flattened bars shrink to
-	// How much further apart (from the grid's own local center) each tile's
-	// position spreads as it flattens, so the bars read as distinct marks
-	// with real gaps rather than drawing together into a denser cluster. Split
-	// per axis rather than one shared factor: local X is init()'s column
-	// offset (col loop) and, per the squash comment above, is also the axis
-	// that reads as screen-horizontal - kept close to native spacing (1, no
-	// extra growth) so columns stay tight, while local Y (row offset, reads
-	// as screen-vertical) still spreads further apart.
-	const chapterFiveColumnSpacingGrowth = 1;
-	const chapterFiveRowSpacingGrowth = 2.5;
-	// Total time spread, across the whole squash, over which each
-	// hiddenGrid instance's own flatten is staggered - see the per-instance
-	// loop below.
+	// The grid tiles and the hero cube no longer just flatten and spread in
+	// place - they line up into a single row of thin, tall bars standing on
+	// end, like a row of dominoes (see the reference poster). The hero cube
+	// (below) leads the row after sliding left; each grid tile then falls
+	// into line behind it, one by one, at the cube's own height.
+	//
+	// The row's own direction isn't a fixed world axis, though: chapter
+	// four's own orbit above leaves the camera's pitch still drifting all the
+	// way through chapter five (orbit2's own lift keeps rising while looking
+	// at a fixed pivot, so its tilt keeps changing even though angle/tilt
+	// themselves don't tween anywhere - confirmed empirically, an earlier
+	// version of this pinned to a fixed world axis and it read as vertical
+	// motion, not horizontal). So "screen-right" is derived straight from the
+	// camera's own live matrixWorld each frame instead - a camera looking
+	// down -Z with a given up has its local +X column pointing exactly at
+	// screen-right in world space, whatever its current pitch happens to be.
+	const dominoCameraRight = new THREE.Vector3();
+	// hiddenGrid's own rotation.x/z (see LandingScene's init()) is fixed
+	// through this whole phase, so its inverse only needs computing once -
+	// pre-rotating a world direction (dominoCameraRight above) by this turns
+	// it into the equivalent direction in the group's own local space, which
+	// is what instance position actually needs (setMatrixAt works in local
+	// space; the group's own transform is applied on top at render time).
+	const dominoGroupQuaternionInverse = landingScene.hiddenGrid.quaternion.clone().invert();
+	// Each tile keeps this orientation throughout - no per-instance rotation,
+	// just position and scale (see the per-tile loop below), so this is
+	// always the matrix's rotation component, not just a starting value.
+	const dominoIdentityQuaternion = new THREE.Quaternion();
+	const dominoSign = 1; // flip to -1 if the hero cube ends up on the row's own side instead of opposite it
+	const dominoThickness = 0.2; // fraction of a tile's native width the bars shrink to on their thinned axes - tune to taste
+	const dominoHeightScale = 3.5; // how many tiles' worth of length the bars stretch to - tune to taste
+	// The grid's own native (pre hiddenGrid-scale) tile size - matches
+	// LandingScene's own gridTileSize without needing a new export, since
+	// cubeBaseSize is exactly gridTileSize*gridToCubeScale there. Also used
+	// by the domino-fall hinge math further below.
+	const gridTileSize = heroCubeSize / landingScene.gridToCubeScale;
+	// Center-to-center spacing along the finished row, in the same local
+	// space as hiddenGridBasePositions. Deliberately NOT the grid's own
+	// original gridWorldSpacing - that rhythm was tuned for 6 columns, and 42
+	// tiles spaced that far apart would sprawl roughly 7x wider than the grid
+	// ever was. Instead scaled off the bars' own flattened width (not tied to
+	// the original grid's own 1.4x width-to-spacing ratio - that shrank the
+	// gap in lockstep with dominoThickness, packing the now-thinner bars in
+	// too tight) via its own ratio, so the row reads as one continuous chain
+	// with a clearly visible gap between each bar, independent of how thin
+	// the bars themselves are.
+	const dominoSpacingRatio = 2.6; // tune to taste
+	const dominoSpacing = gridTileSize * dominoThickness * dominoSpacingRatio;
+
+	// Hero cube leads the row: slides toward screen-left, a plain relative
+	// offset from wherever it already is (not anchored to the grid the way
+	// an earlier version had it - the row below now chases the cube's
+	// height instead, so the cube's own motion can stay simple). Rotation
+	// fully unwinds Phase 5's own 50deg roll (same y axis) so the cube ends
+	// up dead straight rather than the full camera-billboard alignment an
+	// earlier version used, which spun the cube through multiple axes at
+	// once - a plain, single-axis turn reads as a much simpler motion. Any
+	// leftover y-rotation here would read as an actual on-screen roll once
+	// the near-top-down camera above has world x standing in for screen-up,
+	// so this has to land on exactly 0, not just close to it.
+	//
+	// Scale is a plain axis-aligned tween for the same reason, but the tall
+	// axis is x, not y: the cube only ever rotates about y here (this tween
+	// plus Phase 5's own roll, both above), which leaves local y pinned to
+	// world y regardless of angle - and world y is this near-top-down
+	// camera's own view axis (confirmed empirically: camera.up read back as
+	// (1,0,0), i.e. world x is screen-up here, not y), so stretching y reads
+	// as the bar pointing into/out of the screen instead of standing upright
+	// on it. x stays close to world x through this small a y-rotation (a
+	// full quarter turn would mix it into world z instead), so it's what
+	// actually reads as "tall, upright" on screen.
+	const dominoCubeUnrollAngle = cubeRollAngle;
+	const dominoSlideDistance = heroCubeSize * 6; // how far the hero cube travels to lead the row - tune to taste
+
+	landingSceneTimeline.to(landingScene.cube.rotation, {
+		y: `-=${dominoCubeUnrollAngle}`,
+		ease: 'power3.inOut',
+		duration: CHAPTER_FIVE_DURATION,
+	}, PHASE6_START);
+
+	landingSceneTimeline.to(landingScene.cube.scale, {
+		x: dominoHeightScale,
+		y: dominoThickness,
+		z: dominoThickness,
+		ease: 'power3.inOut',
+		duration: CHAPTER_FIVE_DURATION,
+	}, PHASE6_START);
+
+	// Position still needs the live camera-right direction above (a fixed
+	// world axis won't stay "screen-left" through this phase, same reasoning
+	// as the row below), so it keeps the small proxy-tween pattern rather
+	// than a plain gsap .to(). Runs before the grid tiles' own tween below
+	// (added later to this same timeline) so their onUpdate can read this
+	// frame's already-updated cube.position, not last frame's.
+	const dominoCubeStart = new THREE.Vector3();
+	let dominoCubeActive = false;
+	const dominoCubeProxy = { t: 0 };
+	landingSceneTimeline.to(dominoCubeProxy, {
+		t: 1,
+		ease: 'power3.inOut',
+		duration: CHAPTER_FIVE_DURATION,
+		onUpdate: () => {
+			const shouldBeActive = dominoCubeProxy.t > 0;
+			if (shouldBeActive !== dominoCubeActive) {
+				dominoCubeActive = shouldBeActive;
+				if (shouldBeActive) {
+					dominoCubeStart.copy(landingScene.cube.position);
+				}
+			}
+			if (!dominoCubeActive) return;
+
+			landingScene.camera.updateMatrixWorld();
+			dominoCameraRight.setFromMatrixColumn(landingScene.camera.matrixWorld, 0).normalize();
+			landingScene.cube.position
+				.copy(dominoCubeStart)
+				.addScaledVector(dominoCameraRight, -dominoSlideDistance * dominoSign * dominoCubeProxy.t);
+		},
+	}, PHASE6_START);
+
+	// Total time spread, across the whole row assembly, over which each
+	// hiddenGrid instance's own move into line is staggered - see the
+	// per-instance loop below.
 	const chapterFiveStaggerSpan = CHAPTER_FIVE_DURATION * 0.5;
 
 	// Each hiddenGrid instance gets its own small proxy tween (rather than
 	// one tween driving the mesh's shared object-level scale, the way
-	// chapter four's own grow/shrink tweens do) so both the stagger and the
-	// spacing growth above can vary per-tile - group-level scale can't do
-	// either, since it applies identically, and at the same instant, to
-	// every instance at once. Position is scaled directly here too (instead
-	// of being left to hiddenGrid's own group scale, which never changes
-	// through this phase), so the spread-apart above can move independently
-	// of the tiles' own shrinking width.
+	// chapter four's own grow/shrink tweens do) so both the stagger and each
+	// tile's own row position/scale can vary per-instance - group-level scale
+	// can't do either, since it applies identically, and at the same instant,
+	// to every instance at once.
 	const gridInstanceCount = landingScene.hiddenGridBasePositions.length;
 	const gridInstanceDuration = CHAPTER_FIVE_DURATION - chapterFiveStaggerSpan;
-	const gridSquashPosition = new THREE.Vector3();
-	const gridSquashScale = new THREE.Vector3();
-	const gridSquashQuaternion = new THREE.Quaternion(); // instances never rotate individually - stays identity
-	const gridSquashMatrix = new THREE.Matrix4();
+
+	// The stagger below sweeps by rank in this order, not by raw index: the
+	// bottom screen row goes first, right to left across it, then the sweep
+	// moves up to the next screen row and repeats right to left - reversed
+	// from init()'s own col-major construction order (which went left-to-
+	// right across columns, top row first). Sorting on basePosition itself,
+	// rather than reconstructing column/row indices from i, avoids needing
+	// gridColumns/gridRows here at all. This only changes the ORDER tiles
+	// fall into line, not where each one ends up (rowStep below still
+	// follows the original index, so the finished row is unchanged).
+	//
+	// Confirmed empirically (screenshotting the sweep mid-transition):
+	// hiddenGrid's rotation.x setup (see LandingScene's init()) lands local
+	// row (basePosition.y) on the screen's horizontal axis and local column
+	// (basePosition.x) on its vertical axis at this camera angle - the
+	// opposite of the "column = across, row = up" naming basePosition's own
+	// col/row loop uses for the wall it's built from. So each screen row is
+	// a fixed local column - sorting on that (ascending, so the lowest/
+	// bottommost column goes first) is the primary key, and within it,
+	// local row descending sweeps right to left.
+	const dominoSweepRank = new Array(gridInstanceCount);
+	landingScene.hiddenGridBasePositions
+		.map((_, i) => i)
+		.sort((a, b) => {
+			const posA = landingScene.hiddenGridBasePositions[a];
+			const posB = landingScene.hiddenGridBasePositions[b];
+			if (posA.x !== posB.x) return posA.x - posB.x; // column ascending: bottom screen row first
+			return posB.y - posA.y; // row descending: screen right to left within that row
+		})
+		.forEach((originalIndex, rank) => {
+			dominoSweepRank[originalIndex] = rank;
+		});
+
+	const dominoPosition = new THREE.Vector3();
+	const dominoRowTarget = new THREE.Vector3();
+	const dominoLocalFileDirection = new THREE.Vector3();
+	const dominoLocalCubeOffset = new THREE.Vector3();
+	const dominoRowBaseline = new THREE.Vector3();
+	const dominoScale = new THREE.Vector3();
+	const dominoMatrix = new THREE.Matrix4();
 	landingScene.hiddenGridBasePositions.forEach((basePosition, i) => {
-		// Staggered by index (construction's column-major col/row loop - see
-		// LandingScene's init()), so the flatten sweeps across the grid
-		// column by column rather than every tile moving in lockstep.
-		const offset = gridInstanceCount > 1 ? (i / (gridInstanceCount - 1)) * chapterFiveStaggerSpan : 0;
+		// See dominoSweepRank above - this is this tile's place in the fall-
+		// into-line sweep, not its raw construction index.
+		const offset = gridInstanceCount > 1 ? (dominoSweepRank[i] / (gridInstanceCount - 1)) * chapterFiveStaggerSpan : 0;
+		// Starts one spacing out from the cube (index 0 lands immediately
+		// next to it, not on top of it) and counts up from there, rather than
+		// centering the row the way init()'s own column offset did - the cube
+		// leads, so the row should trail off to one side of it, not straddle
+		// it symmetrically. Opposite sign from the cube's own slide above so
+		// the two end up on opposite sides of that shared reference
+		// direction, whichever way it actually points. Still keyed to the
+		// original index (not dominoSweepRank), so the finished row's own
+		// left-to-right order is untouched by the sweep-direction change.
+		const rowStep = (i + 1) * dominoSign;
 		const proxy = { t: 0 };
+		// Runs all the way to the end of the phase, not just this tile's own
+		// gridInstanceDuration - fallT below re-derives the tile's actual
+		// (short, eased) fall-into-line progress from that longer span, so
+		// this keeps calling onUpdate for the rest of chapter five even after
+		// the tile has visually landed. That's necessary because the hero
+		// cube's own slide and the camera's own orbit2 sweep both keep moving
+		// for the full CHAPTER_FIVE_DURATION - an earlier version tied `t`
+		// (and therefore the update callback's own lifetime) directly to
+		// gridInstanceDuration, so once an early-ranked tile finished, GSAP
+		// simply stopped calling its onUpdate, freezing that tile's row
+		// position on wherever the cube and camera happened to be at that
+		// (often well before the cube's slide actually finished) moment -
+		// which is exactly what left a gap between the hero cube and the
+		// row's own first tile once the cube kept sliding past it.
+		const proxyDuration = CHAPTER_FIVE_DURATION - offset;
+		const fallEase = gsap.parseEase('power3.inOut');
 		landingSceneTimeline.to(proxy, {
 			t: 1,
-			ease: 'power3.inOut',
-			duration: gridInstanceDuration,
+			ease: 'none',
+			duration: proxyDuration,
 			onUpdate: () => {
-				gridSquashPosition.set(
-					basePosition.x * THREE.MathUtils.lerp(1, chapterFiveColumnSpacingGrowth, proxy.t),
-					basePosition.y * THREE.MathUtils.lerp(1, chapterFiveRowSpacingGrowth, proxy.t),
-					basePosition.z,
+				const fallT = fallEase(Math.min(proxy.t * proxyDuration / gridInstanceDuration, 1));
+
+				landingScene.camera.updateMatrixWorld();
+				dominoCameraRight.setFromMatrixColumn(landingScene.camera.matrixWorld, 0).normalize();
+				dominoLocalFileDirection.copy(dominoCameraRight).applyQuaternion(dominoGroupQuaternionInverse);
+
+				// The row's own baseline tracks the hero cube's current
+				// position outright (not just its across-the-file component,
+				// projecting out how far it's actually slid - an earlier
+				// version of this did that, which left the row starting from
+				// the cube's pre-slide reference line while the cube itself
+				// slid dominoSlideDistance away, opening a gap between the
+				// two) - see dominoCubeStart/dominoSlideDistance above, which
+				// now leave the cube free to end up anywhere. rowStep below
+				// then only has to cover one tile's own spacing, not the
+				// cube's slide too, so the row picks up right where the cube
+				// leaves off.
+				dominoLocalCubeOffset
+					.copy(landingScene.cube.position)
+					.sub(landingScene.hiddenGrid.position)
+					.applyQuaternion(dominoGroupQuaternionInverse)
+					.divideScalar(landingScene.gridToCubeScale);
+				dominoRowBaseline.copy(dominoLocalCubeOffset);
+
+				dominoRowTarget.copy(dominoLocalFileDirection).multiplyScalar(rowStep * dominoSpacing).add(dominoRowBaseline);
+				dominoPosition.copy(basePosition).lerp(dominoRowTarget, fallT);
+
+				// Tall axis is local X, not Z: confirmed against the world-axes
+				// gizmo (see LandingScene's addWorldAxesGizmo) that the tiles
+				// need to grow along world -X here, not world Y - hiddenGrid's
+				// own fixed rotation.x (see LandingScene's init()) leaves local
+				// X untouched (rotating about X doesn't move the X axis itself),
+				// so growing local X here is what grows world X, with no
+				// per-instance rotation needed to counteract the camera the way
+				// an earlier, camera-billboarded version of this required.
+				dominoScale.set(
+					THREE.MathUtils.lerp(1, dominoHeightScale, fallT),
+					THREE.MathUtils.lerp(1, dominoThickness, fallT),
+					THREE.MathUtils.lerp(1, dominoThickness, fallT),
 				);
-				gridSquashScale.set(THREE.MathUtils.lerp(1, chapterFiveSquash, proxy.t), 1, 1);
-				gridSquashMatrix.compose(gridSquashPosition, gridSquashQuaternion, gridSquashScale);
-				landingScene.hiddenGrid.setMatrixAt(i, gridSquashMatrix);
+				dominoMatrix.compose(dominoPosition, dominoIdentityQuaternion, dominoScale);
+				landingScene.hiddenGrid.setMatrixAt(i, dominoMatrix);
 				landingScene.hiddenGrid.instanceMatrix.needsUpdate = true;
 			},
 		}, PHASE6_START + offset);
@@ -1306,9 +1632,9 @@ function onload(){
 	// exact moment in the orbit - here it still faces the camera rather than
 	// hiding edge-on to it, so it's backed by an explicit visibility toggle
 	// below rather than counting on the collapse alone. Quicker than the
-	// grid/cube's own squash (a fraction of CHAPTER_FIVE_DURATION) so the
-	// walls are gone early, out of the way before the grid/cube's own
-	// flatten finishes.
+	// grid/cube's own move into the row (a fraction of CHAPTER_FIVE_DURATION)
+	// so the walls are gone early, out of the way before the domino row
+	// finishes assembling.
 	const chapterFiveWallVanishDuration = CHAPTER_FIVE_DURATION * 0.2;
 	landingScene.walls.forEach((wall) => {
 		let wallHidden = false;
@@ -1333,21 +1659,6 @@ function onload(){
 		}, PHASE6_START);
 	});
 
-	// Hero cube flattens on the same local X, landing on the exact same
-	// absolute world-unit thickness as the grid/wall tiles above rather than
-	// just chapterFiveSquash's own fraction. Its own Phase 5 growth (scale
-	// 1.5, see above) means it can't just reuse chapterFiveSquash directly
-	// the way the grid tiles do (whose pre-squash scale, gridToCubeScale,
-	// already nets out to exactly cubeBaseSize) - dividing by that same 1.5
-	// here cancels Phase 5's growth back out first, so this also lands on
-	// cubeBaseSize * chapterFiveSquash, matching the grid/wall tiles' own
-	// final size instead of ending up 1.5x thicker than them.
-	landingSceneTimeline.to(landingScene.cube.scale, {
-		x: chapterFiveSquash / 1.5,
-		ease: 'power3.inOut',
-		duration: CHAPTER_FIVE_DURATION,
-	}, PHASE6_START);
-
 	// Chapter four fades out over the same window as chapter five's camera
 	// move above, mirroring how each earlier chapter fades out ahead of the
 	// next one's own trigger.
@@ -1368,6 +1679,10 @@ function onload(){
 
 	landingSceneTimeline.call(() => {
 		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			// Same fast-scroll handoff guard as CHAPTER_THREE_TRIGGER/
+			// CHAPTER_FOUR_TRIGGER above.
+			chapterFourTimeline.pause(0);
+			gsap.set('.chapter-four-description', { autoAlpha: 0 });
 			chapterFiveTimeline.play();
 		} else {
 			chapterFiveTimeline.pause();
@@ -1377,13 +1692,336 @@ function onload(){
 				duration: CHAPTER_FIVE_HIDE_DURATION,
 				onComplete: () => chapterFiveTimeline.pause(0),
 			});
+			// Same re-entry guard as CHAPTER_THREE_TRIGGER/CHAPTER_FOUR_TRIGGER's
+			// reverse branches above.
+			chapterFourTimeline.play();
 		}
 	}, null, CHAPTER_FIVE_TRIGGER);
 
+	// Chapter five's own close: once the row's had a moment to settle (and its
+	// title's had a moment to read - DOMINO_FALL_STOPPAGE, same "give the
+	// reader scroll room" pattern as every other chapter's own stoppage), the
+	// hero cube leading the row tips over first, and the rest of the row
+	// follows in order, one after another - the reference "domino effect"
+	// pictogram.
+	//
+	// Nothing here needs live camera tracking the way every phase above did:
+	// the whole rig (orbit2, the cube's own slide) is done moving by
+	// CHAPTER_FIVE_TRIGGER, so the camera is simply fixed for the rest of the
+	// timeline, and a fall built directly on fixed world/local axes is both
+	// correct and far simpler than re-deriving screen-relative directions
+	// every frame.
+	//
+	// The topple itself rotates about world Y. That reads as the standing
+	// bar tipping from screen-vertical over to screen-horizontal precisely
+	// because world Y is this camera's own near-top-down view axis: the
+	// "tall" dimension the assembly loop above built is world X - a
+	// HORIZONTAL world axis (see that loop's own tall-axis comment) that
+	// only reads as "standing up" because this camera's up vector happens to
+	// be world X, not because anything is actually standing up out of the
+	// ground in true 3D. So there's no real gravity-driven hinge to
+	// simulate here - rotating about the camera's own view axis (world Y) is
+	// exactly the screen-space equivalent of "tip over and lie flat", which
+	// is the only thing that has to read correctly.
+	const DOMINO_FALL_START = CHAPTER_FIVE_TRIGGER + DOMINO_FALL_STOPPAGE;
+	const dominoFallAngle = THREE.MathUtils.degToRad(-85); // negative reads as "falls to the right" on screen - flip the sign if a later tweak makes it read the other way
+	const dominoFallWorldAxis = new THREE.Vector3(0, 1, 0);
+	// hiddenGrid's own fixed rotation (dominoGroupQuaternionInverse, captured
+	// above) turns that same world axis into the grid instances' own local
+	// space, exactly like dominoLocalFileDirection did for position earlier.
+	const dominoFallLocalAxis = dominoFallWorldAxis.clone().applyQuaternion(dominoGroupQuaternionInverse).normalize();
+	// Each piece hinges at its own trailing edge (the -X end of its "tall"
+	// axis) rather than rotating about its own center, so the fall reads as
+	// toppling from a fixed base rather than spinning in place - same
+	// reasoning a real domino's own base staying planted while its top
+	// swings over.
+	const dominoFallHingeAxis = new THREE.Vector3(1, 0, 0);
+
+	// Small per-piece variance so the fallen row doesn't read as one
+	// perfectly uniform, mechanically identical wave - real dominoes never
+	// land quite parallel to their neighbors. Both the fall's own angle
+	// (some land a touch short of, or past, "flat") and its axis (tilted a
+	// little off the pure topple axis, so pieces don't all point the exact
+	// same way once down) get a small random nudge, generated once per piece
+	// at the moment it starts falling (see each capture block below) rather
+	// than live, so it's a fixed per-piece "personality" instead of
+	// jittering every frame.
+	const dominoFallAngleVarianceMax = THREE.MathUtils.degToRad(8);
+	const dominoFallAxisVarianceMax = 0.12; // small off-axis component before renormalizing - tune to taste
+	const randomFallAngle = () => dominoFallAngle + (Math.random() * 2 - 1) * dominoFallAngleVarianceMax;
+	// dominoFallWorldAxis/dominoFallLocalAxis are the topple axis in each
+	// object's own space (world for the cube, local for the grid tiles) -
+	// nudging it by a small random amount in the two directions
+	// perpendicular to it, then renormalizing, tilts the axis itself a
+	// little rather than just scaling the angle, so pieces don't all fall
+	// toward the exact same compass heading either.
+	const randomAxisVariance = (baseAxis, perpA, perpB) => baseAxis.clone()
+		.addScaledVector(perpA, (Math.random() * 2 - 1) * dominoFallAxisVarianceMax)
+		.addScaledVector(perpB, (Math.random() * 2 - 1) * dominoFallAxisVarianceMax)
+		.normalize();
+	// Perpendicular to dominoFallWorldAxis (world Y) - for the cube, which
+	// works directly in world space.
+	const worldAxisPerpA = new THREE.Vector3(1, 0, 0);
+	const worldAxisPerpB = new THREE.Vector3(0, 0, 1);
+	// Perpendicular to dominoFallLocalAxis (local -Z, world Y's own local
+	// equivalent - see that axis's own comment above) - for the grid tiles,
+	// which work in hiddenGrid's local space.
+	const localAxisPerpA = new THREE.Vector3(1, 0, 0);
+	const localAxisPerpB = new THREE.Vector3(0, 1, 0);
+
+	// Hero cube first.
+	const cubeFallHalfHeight = (heroCubeSize / 2) * dominoHeightScale;
+	const cubeFallRestPosition = new THREE.Vector3();
+	const cubeFallRestQuaternion = new THREE.Quaternion();
+	const cubeFallHinge = new THREE.Vector3();
+	const cubeFallOffset = new THREE.Vector3();
+	const cubeFallDelta = new THREE.Quaternion();
+	const cubeFallOwnAxis = new THREE.Vector3();
+	let cubeFallOwnAngle = dominoFallAngle;
+	let cubeFallCaptured = false;
+	const cubeFallProxy = { t: 0 };
+
+	// Grid tiles then follow, one by one in the row's own order (the same
+	// index order rowStep already used above, so index 0 - right next to the
+	// cube - falls first and the wave runs outward from there). Reading the
+	// tile's CURRENT matrix (rather than recomputing the assembly's own
+	// position formula again) keeps this in lockstep with whatever the
+	// assembly loop above actually landed each tile on.
+	const gridFallHalfHeight = (gridTileSize / 2) * dominoHeightScale;
+	// Purely per-frame scratch (fully consumed within a single synchronous
+	// onUpdate call, never read back on a later frame) - safe to share across
+	// every tile's own tween, same as the assembly loop's own dominoPosition
+	// etc. above.
+	const gridFallOffset = new THREE.Vector3();
+	const gridFallDelta = new THREE.Quaternion();
+	const gridFallPosition = new THREE.Vector3();
+	const gridFallQuaternion = new THREE.Quaternion();
+	const gridFallMatrix = new THREE.Matrix4();
+
+	// Every piece (cube + 42 tiles) shares one even cascade across
+	// DOMINO_FALL_DURATION - k=0 is the cube, k=1..gridInstanceCount are the
+	// tiles in row order - rather than the assembly loop's own two-tier
+	// stagger/duration split, since there's no separate "settle" motion here
+	// to budget for, just each piece's own quick tip.
+	const dominoFallPieceCount = gridInstanceCount + 1;
+	const dominoFallStaggerSpan = DOMINO_FALL_DURATION * 0.7;
+	const dominoFallTipDuration = DOMINO_FALL_DURATION - dominoFallStaggerSpan;
+
+	landingSceneTimeline.to(cubeFallProxy, {
+		t: 1,
+		ease: 'power2.inOut',
+		duration: dominoFallTipDuration,
+		onUpdate: () => {
+			if (!cubeFallCaptured) {
+				cubeFallCaptured = true;
+				cubeFallRestPosition.copy(landingScene.cube.position);
+				cubeFallRestQuaternion.copy(landingScene.cube.quaternion);
+				cubeFallHinge.copy(cubeFallRestPosition).addScaledVector(dominoFallHingeAxis, -cubeFallHalfHeight);
+				cubeFallOwnAngle = randomFallAngle();
+				cubeFallOwnAxis.copy(randomAxisVariance(dominoFallWorldAxis, worldAxisPerpA, worldAxisPerpB));
+			}
+			cubeFallDelta.setFromAxisAngle(cubeFallOwnAxis, cubeFallOwnAngle * cubeFallProxy.t);
+			cubeFallOffset.copy(cubeFallRestPosition).sub(cubeFallHinge).applyQuaternion(cubeFallDelta);
+			landingScene.cube.position.copy(cubeFallHinge).add(cubeFallOffset);
+			landingScene.cube.quaternion.copy(cubeFallDelta).multiply(cubeFallRestQuaternion);
+		},
+	}, DOMINO_FALL_START);
+
+	landingScene.hiddenGridBasePositions.forEach((_, i) => {
+		const offset = (i + 1) / (dominoFallPieceCount - 1) * dominoFallStaggerSpan;
+		let captured = false;
+		// Unlike the per-frame scratch above, these have to persist as this
+		// specific tile's own rest state across every frame for the rest of
+		// the fall, not just the one onUpdate call that captures them - each
+		// tile needs its own (an earlier version shared one set across all
+		// 42 tiles the way the per-frame scratch above safely does, but since
+		// neighboring tiles' fall windows overlap in time, a later tile's own
+		// capture clobbered an earlier tile's rest position mid-fall, which
+		// is what was pulling tiles away from the hero cube's own landing
+		// spot instead of continuing its line).
+		const restPosition = new THREE.Vector3();
+		const restQuaternion = new THREE.Quaternion();
+		const scale = new THREE.Vector3();
+		const hinge = new THREE.Vector3();
+		const ownAxis = new THREE.Vector3();
+		let ownAngle = dominoFallAngle;
+		const proxy = { t: 0 };
+		landingSceneTimeline.to(proxy, {
+			t: 1,
+			ease: 'power2.inOut',
+			duration: dominoFallTipDuration,
+			onUpdate: () => {
+				if (!captured) {
+					captured = true;
+					landingScene.hiddenGrid.getMatrixAt(i, gridFallMatrix);
+					gridFallMatrix.decompose(restPosition, restQuaternion, scale);
+					hinge.copy(restPosition).addScaledVector(dominoFallHingeAxis, -gridFallHalfHeight);
+					ownAngle = randomFallAngle();
+					ownAxis.copy(randomAxisVariance(dominoFallLocalAxis, localAxisPerpA, localAxisPerpB));
+				}
+				gridFallDelta.setFromAxisAngle(ownAxis, ownAngle * proxy.t);
+				gridFallOffset.copy(restPosition).sub(hinge).applyQuaternion(gridFallDelta);
+				gridFallPosition.copy(hinge).add(gridFallOffset);
+				gridFallQuaternion.copy(gridFallDelta).multiply(restQuaternion);
+				gridFallMatrix.compose(gridFallPosition, gridFallQuaternion, scale);
+				landingScene.hiddenGrid.setMatrixAt(i, gridFallMatrix);
+				landingScene.hiddenGrid.instanceMatrix.needsUpdate = true;
+			},
+		}, DOMINO_FALL_START + offset);
+	});
+
 	// See CHAPTER_FIVE_TAIL's own comment above - this dummy tween is the
-	// scroll room that constant reserves, keeping CHAPTER_FIVE_TRIGGER a
-	// genuine interior point instead of the timeline's own last moment.
-	landingSceneTimeline.to({}, { duration: CHAPTER_FIVE_TAIL }, CHAPTER_FIVE_TRIGGER);
+	// scroll room that constant reserves, giving the reader a beat after the
+	// domino topple above before chapter six's own opening beat (the scatter
+	// below) begins.
+	landingSceneTimeline.to({}, { duration: CHAPTER_FIVE_TAIL }, DOMINO_FALL_START + DOMINO_FALL_DURATION);
+
+	// Chapter six opens: every fallen piece (hero cube + 42 grid tiles),
+	// still lying flat where the topple above left it, scatters downward out
+	// of frame - disorganized rather than the topple's own ordered wave, so
+	// this reads as debris clearing away rather than another choreographed
+	// domino beat. Each piece independently randomizes its own start offset,
+	// fall distance and spin, rather than sharing the topple's index-ordered
+	// rowStep/dominoSweepRank.
+	//
+	// The camera is fixed for the whole rest of the timeline by this point
+	// (see DOMINO_FALL's own comment above), so the "down" direction and the
+	// spin axis only need deriving once, the first time any piece's own
+	// onUpdate below actually runs - NOT here at setup time, since setup
+	// runs synchronously on page load, before orbit2 has ever rendered a
+	// frame. chapterFiveScreenUp is only live-correct once orbit2 has
+	// actually run (it's mutated in place by orbit2's own onUpdate above);
+	// cloning it here would freeze in its unset (0,0,0) starting value
+	// instead of the camera-up direction it holds by the time this phase
+	// plays.
+	const DOMINO_CLEAR_START = DOMINO_FALL_START + DOMINO_FALL_DURATION + CHAPTER_FIVE_TAIL;
+
+	// "Down" on screen is the negative of the camera's own local up axis in
+	// world space - chapterFiveScreenUp holds exactly that once orbit2 has
+	// run. Populated by dominoClearCaptureDirection() below, the first time
+	// any piece's onUpdate actually fires past DOMINO_CLEAR_START.
+	const dominoClearScreenDown = new THREE.Vector3();
+	// hiddenGrid's own fixed rotation turns that same world direction into
+	// the grid instances' own local space, exactly like dominoLocalFileDirection
+	// did for the assembly loop's position math above.
+	const dominoClearScreenDownLocal = new THREE.Vector3();
+	let dominoClearDirectionCaptured = false;
+	function dominoClearCaptureDirection() {
+		if (dominoClearDirectionCaptured) return;
+		dominoClearDirectionCaptured = true;
+		dominoClearScreenDown.copy(chapterFiveScreenUp).negate();
+		dominoClearScreenDownLocal.copy(dominoClearScreenDown).applyQuaternion(dominoGroupQuaternionInverse).normalize();
+	}
+
+	// Spin axis: same world-Y-reads-as-screen-plane-spin logic the topple's
+	// own dominoFallWorldAxis/dominoFallLocalAxis used above (see that
+	// comment) - world Y directly for the cube, hiddenGrid's local
+	// equivalent for the grid tiles.
+	const dominoClearWorldAxis = new THREE.Vector3(0, 1, 0);
+	const dominoClearLocalAxis = dominoClearWorldAxis.clone().applyQuaternion(dominoGroupQuaternionInverse).normalize();
+
+	// Fall distance, in world units, generous enough to carry even the
+	// shortest-variance piece past the bottom edge of frame - tune to taste
+	// against the actual camera framing at this point in the timeline.
+	const dominoClearDistance = heroCubeSize * 60;
+	const dominoClearDistanceVariance = 0.35; // +/- fraction of dominoClearDistance, randomized per piece
+	// hiddenGrid's tiles work in local space, where distances read
+	// gridToCubeScale times larger once hiddenGrid's own scale is applied -
+	// same conversion gridTileSize above already relies on.
+	const dominoClearDistanceLocal = dominoClearDistance / landingScene.gridToCubeScale;
+	// Spin amount: a few full turns so the tumbling reads clearly even over
+	// a piece's own short remaining duration - randomized in both magnitude
+	// and direction per piece so they don't all spin the same way.
+	const dominoClearSpinTurnsMin = 1.5;
+	const dominoClearSpinTurnsMax = 3;
+	const randomClearAngle = () => THREE.MathUtils.lerp(dominoClearSpinTurnsMin, dominoClearSpinTurnsMax, Math.random())
+		* Math.PI * 2 * (Math.random() < 0.5 ? -1 : 1);
+	const randomClearDistance = (base) => base * (1 + (Math.random() * 2 - 1) * dominoClearDistanceVariance);
+
+	// Every piece gets its own random start offset across most of
+	// DOMINO_CLEAR_DURATION (rather than the topple's index-ordered offset),
+	// each then falling over whatever duration remains to it - same
+	// "proxyDuration" pattern the topple above uses so every piece still
+	// finishes exactly at DOMINO_CLEAR_START + DOMINO_CLEAR_DURATION
+	// regardless of its own random offset, keeping the scrubbed timeline's
+	// end state clean.
+	const dominoClearStaggerSpan = DOMINO_CLEAR_DURATION * 0.6;
+
+	// Hero cube first.
+	const cubeClearStart = new THREE.Vector3();
+	const cubeClearRestQuaternion = new THREE.Quaternion();
+	const cubeClearOffset = new THREE.Vector3();
+	const cubeClearDelta = new THREE.Quaternion();
+	let cubeClearDistanceOwn = dominoClearDistance;
+	let cubeClearAngleOwn = 0;
+	let cubeClearCaptured = false;
+	const cubeClearProxy = { t: 0 };
+	const cubeClearOffsetTime = Math.random() * dominoClearStaggerSpan;
+	landingSceneTimeline.to(cubeClearProxy, {
+		t: 1,
+		ease: 'power2.in', // accelerating fall reads as gravity, not a glide
+		duration: DOMINO_CLEAR_DURATION - cubeClearOffsetTime,
+		onUpdate: () => {
+			if (!cubeClearCaptured) {
+				cubeClearCaptured = true;
+				dominoClearCaptureDirection();
+				cubeClearStart.copy(landingScene.cube.position);
+				cubeClearRestQuaternion.copy(landingScene.cube.quaternion);
+				cubeClearDistanceOwn = randomClearDistance(dominoClearDistance);
+				cubeClearAngleOwn = randomClearAngle();
+			}
+			cubeClearOffset.copy(dominoClearScreenDown).multiplyScalar(cubeClearDistanceOwn * cubeClearProxy.t);
+			landingScene.cube.position.copy(cubeClearStart).add(cubeClearOffset);
+			cubeClearDelta.setFromAxisAngle(dominoClearWorldAxis, cubeClearAngleOwn * cubeClearProxy.t);
+			landingScene.cube.quaternion.copy(cubeClearDelta).multiply(cubeClearRestQuaternion);
+		},
+	}, DOMINO_CLEAR_START + cubeClearOffsetTime);
+
+	// Grid tiles then follow, each independently timed rather than in the
+	// topple's row order - reading the tile's CURRENT matrix (its landed,
+	// post-topple state) rather than recomputing any earlier phase's own
+	// position formula, same as the topple loop above.
+	landingScene.hiddenGridBasePositions.forEach((_, i) => {
+		const offsetTime = Math.random() * dominoClearStaggerSpan;
+		// Persists as this tile's own rest state across every frame of its
+		// fall - see the topple loop's own comment above for why this can't
+		// be shared per-frame scratch the way the assembly loop's variables
+		// are (overlapping per-tile fall windows would clobber each other).
+		const restPosition = new THREE.Vector3();
+		const restQuaternion = new THREE.Quaternion();
+		const scale = new THREE.Vector3();
+		const fallOffset = new THREE.Vector3();
+		const spinDelta = new THREE.Quaternion();
+		const finalPosition = new THREE.Vector3();
+		const finalQuaternion = new THREE.Quaternion();
+		const matrix = new THREE.Matrix4();
+		let distanceOwn = dominoClearDistanceLocal;
+		let angleOwn = 0;
+		let captured = false;
+		const proxy = { t: 0 };
+		landingSceneTimeline.to(proxy, {
+			t: 1,
+			ease: 'power2.in',
+			duration: DOMINO_CLEAR_DURATION - offsetTime,
+			onUpdate: () => {
+				if (!captured) {
+					captured = true;
+					dominoClearCaptureDirection();
+					landingScene.hiddenGrid.getMatrixAt(i, matrix);
+					matrix.decompose(restPosition, restQuaternion, scale);
+					distanceOwn = randomClearDistance(dominoClearDistanceLocal);
+					angleOwn = randomClearAngle();
+				}
+				fallOffset.copy(dominoClearScreenDownLocal).multiplyScalar(distanceOwn * proxy.t);
+				finalPosition.copy(restPosition).add(fallOffset);
+				spinDelta.setFromAxisAngle(dominoClearLocalAxis, angleOwn * proxy.t);
+				finalQuaternion.copy(spinDelta).multiply(restQuaternion);
+				matrix.compose(finalPosition, finalQuaternion, scale);
+				landingScene.hiddenGrid.setMatrixAt(i, matrix);
+				landingScene.hiddenGrid.instanceMatrix.needsUpdate = true;
+			},
+		}, DOMINO_CLEAR_START + offsetTime);
+	});
 
 };
 

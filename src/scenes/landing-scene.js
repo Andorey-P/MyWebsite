@@ -436,6 +436,26 @@ export default class LandingScene extends BaseThreeJS{
     this.hiddenGrid.instanceMatrix.needsUpdate = true;
     this.scene.add(this.hiddenGrid);
 
+    // Chapter six's scanimation reveal - the actual barrier-grid asset (public/
+    // textures/scanimation.png), tested and measured in prototype/scanimation.js
+    // before landing here (pixel-measured via autocorrelation: a 36px pitch, ~50/50
+    // bar:gap split - see main.js's chapter six section for the actual numbers).
+    // Unit-sized (1x1) and hidden until main.js scales/positions/animates it against
+    // the reform grid's own matching pitch.
+    const scanTexLoader = new THREE.TextureLoader(this.loadingManager);
+    const scanTexture = scanTexLoader.load('./textures/scanimation.png');
+    const scanPlaneGeometry = new THREE.PlaneGeometry(1, 1);
+    const scanPlaneMaterial = new THREE.MeshBasicMaterial({
+      color: PALETTE.brick, // the site's own orange, used throughout the UI chrome
+      alphaMap: scanTexture,
+      transparent: true,
+      alphaTest: 0.5, // a hard cutout, not a soft blend - matches the prototype
+      side: THREE.DoubleSide,
+    });
+    this.scanPlane = new THREE.Mesh(scanPlaneGeometry, scanPlaneMaterial);
+    this.scanPlane.visible = false;
+    this.scene.add(this.scanPlane);
+
     // Chapter four's ground shadow catcher - a plane sitting just below the
     // hidden grid's own tile bottoms, invisible everywhere except where a
     // shadow actually falls on it (THREE.ShadowMaterial renders nothing but

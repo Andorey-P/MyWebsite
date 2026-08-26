@@ -364,7 +364,12 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 5vw;
+  padding-left: 5vw;
+  /* The world-axes gizmo (ViewHelper, see LandingScene.addWorldAxesGizmo) is
+     pinned to a fixed 128px square in the canvas's bottom-right corner,
+     unlike this row's vw-based inset - keep at least that much clearance so
+     "Scroll to continue" doesn't slide under it on narrower viewports. */
+  padding-right: max(5vw, 152px);
   font-family: 'Neue Haas Grotesk';
   font-size: 0.65rem;
   letter-spacing: 0.08em;

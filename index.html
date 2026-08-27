@@ -90,13 +90,26 @@
           </div>
         </div>
 
+        <div class="chapter-six-description">
+          <div class="chapter-six-description-left">
+            <h6 class="chapter-number">Chapter 06<span class="chapter-number-sub">— Emergence</span></h6>
+            <h1 class="split-reveal-six">Emergence</h1>
+            <h3 class="split-reveal-six">Every piece finds its own shape. Held together by nothing but constant attraction, they become something no single one could be.</h3>
+          </div>
+        </div>
+
+        <!-- Windows scene: swapped in via setActiveScene() right as the closing wipe
+             finishes covering the screen (see main.js), sitting behind the dots so the
+             swap is invisible until they shrink back away. -->
+        <div id="windows-scene" class="windows-scene"></div>
+
+        <!-- Closing wipe: growing circle-grid reveal, see main.js's CHAPTER_SIX_REVEAL section. -->
+        <div class="chapter-six-reveal" aria-hidden="true"></div>
+
         <div class="noise-overlay"></div>
 
       </div>
 
-      <div id='someSpace' class="someSpace background-green" style=" width: 100vw; height: 30vh;"></div>
-      <div id="second-scene" class="background-blue" style="width: 100vw; height: 100vh;"></div>
-    
     </div>
     
     <script type="module" src="/src/core/main.js"></script>

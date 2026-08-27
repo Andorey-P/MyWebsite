@@ -4,8 +4,8 @@ import ScrollTrigger from "gsap/ScrollTrigger";
 import SplitType from 'split-type'
 
 import { LoadingManager } from "three";
-import LandingScene from "../scenes/landing-scene";
-import SecondScene from '../scenes/second-scene';
+import LandingScene, { SWARM_RETREAT_DURATION } from "../scenes/landing-scene";
+import WindowsScene from '../scenes/windows-scene';
 import Lenis from 'lenis'
 import { PALETTE } from '../materials/palette.js';
 import { decodeFinalFrame, replaceImgWithCanvas } from './gifScrubber.js';
@@ -28,6 +28,9 @@ gsap.set('.split-reveal-four .char', { yPercent: 100 });
 // Chapter five's text, split separately for the same reason.
 const chapterFiveTitle = new SplitType(".split-reveal-five");
 gsap.set('.split-reveal-five .char', { yPercent: 100 });
+// Chapter six's text, split separately for the same reason.
+const chapterSixTitle = new SplitType(".split-reveal-six");
+gsap.set('.split-reveal-six .char', { yPercent: 100 });
 
 // Re-splits the hero text and refreshes ScrollTrigger after a resize settles.
 let splitResizeTimeout;
@@ -142,7 +145,7 @@ renderer.domElement.classList.add('threejs-canvas');
 
 // initialize all threejs scene ************TO DO: Manage the fact that the renderer takes the size of the cointainer, but we also want to pin the container and make it super large so we casn scroll
 const landingScene = new LandingScene('landing-scene',loadingManager, renderer);
-// const secondScene = new SecondScene('second-scene',loadingManager, renderer);
+const windowsScene = new WindowsScene('windows-scene', loadingManager, renderer);
 setActiveScene(landingScene);
 
 window.addEventListener('load', onload);
@@ -210,15 +213,36 @@ const DOMINO_FALL_STOPPAGE = 1;
 const DOMINO_FALL_DURATION = 3;
 // Scrubbed length of chapter six's opening beat: every fallen piece scatters out of frame.
 const DOMINO_CLEAR_DURATION = 2;
-// Pause after the clear finishes, before pieces start dropping back in from above.
-const DOMINO_REFORM_STOPPAGE = 1;
-// Scrubbed length of chapter six's reform: every piece drops in from above the viewport,
-// staggered left to right, to build the poster's own barcode-silhouette shape.
-const DOMINO_REFORM_DURATION = 3;
-// Pause after the reform grid settles, before the scanimation plane starts its slide.
-const SCAN_PLANE_STOPPAGE = 1;
-// Scrubbed length of the scanimation plane's own slide in from off-screen right.
-const SCAN_PLANE_DURATION = 2.5;
+// Negative here means the swarm's entrance starts that much earlier than the
+// domino clear's own nominal end, overlapping its tail instead of waiting for
+// it to fully finish - same "starts early, overlapping the invisible tail"
+// technique the shelved chapter six reveal above used for the same reason.
+const SHAPES_SWARM_STOPPAGE = -0.5;
+// Scroll room the swarm actually gets to live in, from SHAPES_SWARM_START
+// through to SHAPES_SWARM_EXIT_START (which sits SWARM_RETREAT_DURATION +
+// SHAPES_SWARM_EXIT_BUFFER before the end of this span - see its own
+// declaration) and then the pinned range's own end past that. Needs real room:
+// too narrow and a normal scroll blows straight through both the entrance and
+// the auto-exit-before-the-wipe trigger in one motion, and a scroll-back
+// meant to look at the swarm again crosses both triggers too, landing back on
+// SHAPES_SWARM_START's own reverse (exit) branch instead of stopping on
+// SHAPES_SWARM_EXIT_START's reverse (re-enter) one - reads as "it won't come
+// back." This also doubles as the same trailing-room fix CHAPTER_FIVE_TAIL
+// has for its own trigger: without it, scrolling up out of the pin and back
+// down again could never re-fire a reverse branch at all.
+const SHAPES_SWARM_TAIL = 4;
+// Closing wipe: a halftone-style wave of growing dark dots (Bauhaus exhibition
+// poster reference) that merges into a solid field, covering the screen at the
+// very end of the current scrollable range (right after the shapes swarm's own
+// tail) - was originally positioned right after the domino clear instead (see
+// git history), but that slot now belongs to the shapes swarm/chapter six text.
+const CHAPTER_SIX_REVEAL_STOPPAGE = 0;
+// Scrubbed length of the circle-grid reveal.
+const CHAPTER_SIX_REVEAL_DURATION = 2;
+// Scrubbed length of the windows scene's own small scroll-driven camera move,
+// right after it's swapped in (see the setActiveScene(windowsScene) call in
+// onload()).
+const WINDOWS_CAMERA_DURATION = 2;
 
 // Timeline for events in the landing section
 const landingSceneTimeline = gsap.timeline({
@@ -228,7 +252,10 @@ const landingSceneTimeline = gsap.timeline({
 		start: 'top top', // when the top of the trigger hits the top of the viewport
 		// Scroll length: two viewport heights for the original phases, plus room for
 		// every chapter's stoppage/duration above. Recomputed on resize.
-		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION + sphereMoveDuration + CHAPTER_FIVE_STOPPAGE + CHAPTER_FIVE_DURATION + DOMINO_FALL_STOPPAGE + DOMINO_FALL_DURATION + CHAPTER_FIVE_TAIL + DOMINO_CLEAR_DURATION + DOMINO_REFORM_STOPPAGE + DOMINO_REFORM_DURATION + SCAN_PLANE_STOPPAGE + SCAN_PLANE_DURATION)),
+		// Chapter six's reveal terms (+ CHAPTER_SIX_REVEAL_STOPPAGE + CHAPTER_SIX_REVEAL_DURATION)
+		// are left out while that section is commented out below - add them back in
+		// alongside it.
+		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION + sphereMoveDuration + CHAPTER_FIVE_STOPPAGE + CHAPTER_FIVE_DURATION + DOMINO_FALL_STOPPAGE + DOMINO_FALL_DURATION + CHAPTER_FIVE_TAIL + DOMINO_CLEAR_DURATION + SHAPES_SWARM_STOPPAGE + SHAPES_SWARM_TAIL + CHAPTER_SIX_REVEAL_STOPPAGE + CHAPTER_SIX_REVEAL_DURATION + WINDOWS_CAMERA_DURATION)),
 		invalidateOnRefresh: true,
 		scrub: 1, // lower scrub means the camera reacts more directly to scrolling
 		markers: false
@@ -1221,6 +1248,29 @@ function onload(){
 	// disorganized (not ordered) wave, so it reads as debris clearing away.
 	const DOMINO_CLEAR_START = DOMINO_FALL_START + DOMINO_FALL_DURATION + CHAPTER_FIVE_TAIL;
 
+	// Chapter five's text recedes as the fallen pieces start scattering out of
+	// frame (not the earlier topple, while they're still lying in view) - clears
+	// the way for the clear/swarm beat and foreshadows the handoff to chapter
+	// six. A plain fire-and-forget fade (not baked into the scrubbed timeline
+	// itself), same idiom as CHAPTER_FIVE_TRIGGER's own reverse-branch fade
+	// above, so it always takes the same real time regardless of scroll speed.
+	const CHAPTER_FIVE_FADE_OUT_DURATION = 1;
+	landingSceneTimeline.call(() => {
+		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			gsap.to('.chapter-five-description', {
+				autoAlpha: 0,
+				ease: 'power1.inOut',
+				duration: CHAPTER_FIVE_FADE_OUT_DURATION,
+			});
+		} else {
+			gsap.to('.chapter-five-description', {
+				autoAlpha: 1,
+				ease: 'power1.inOut',
+				duration: CHAPTER_FIVE_FADE_OUT_DURATION,
+			});
+		}
+	}, null, DOMINO_CLEAR_START);
+
 	// "Down" on screen is the negative of the camera's own live up axis, captured once
 	// the first time any piece's onUpdate runs past DOMINO_CLEAR_START.
 	const dominoClearScreenDown = new THREE.Vector3();
@@ -1321,273 +1371,194 @@ function onload(){
 		}, DOMINO_CLEAR_START + offsetTime);
 	});
 
-	// Chapter six's reform: once every piece has cleared the frame, the 42 grid tiles (no
-	// hero cube for now) drop back in from above the viewport, staggered left to right, and
-	// settle into a single row of upright bars again - same "row of vertical bars" reading
-	// as the pre-topple row above (local X stays each bar's own tall axis; screen-right sets
-	// its place in the row). Every bar shares the same size and the same baseline - thin,
-	// long, tightly packed, and perfectly flush - reading as one dense scanimation-style
-	// grid rather than a silhouette.
-	const DOMINO_REFORM_START = DOMINO_CLEAR_START + DOMINO_CLEAR_DURATION + DOMINO_REFORM_STOPPAGE;
+	// Chapter six's shapes swarm: once the dominoes have cleared the frame, a swarm
+	// of 3D die-cut shapes flies in from outside the frame and settles into a
+	// physically-collided cluster toward screen-right, with constant central
+	// attraction so it keeps drifting instead of freezing solid once settled.
+	// Built lazily on first entrance (see enterShapesSwarm) since the camera is
+	// fixed by this point in the timeline, which is what its own placement is
+	// derived from. Scrolling back past this point lerps every shape back out to
+	// where it flew in from, rather than just leaving it sitting there while
+	// earlier chapters' own camera moves play out underneath it.
+	const SHAPES_SWARM_START = DOMINO_CLEAR_START + DOMINO_CLEAR_DURATION + SHAPES_SWARM_STOPPAGE;
 
-	const reformBarCount = gridInstanceCount; // 42 tiles
-	const reformCenterRank = (reformBarCount - 1) / 2;
-	// Scales the whole reform grid (bar length, thickness, and - since spacing is
-	// derived from thickness below - the gaps between bars too) up together, so the
-	// grid takes up more of the viewport without upsetting the bar:gap ratio the scan
-	// plane's own alignment depends on. The scan plane's size is itself derived from
-	// this grid's spacing further down, so it grows right along with it - tune to taste.
-	const REFORM_SCALE_MULTIPLIER = 1.35;
-	// Every bar shares this same size - thinner and much longer than the pre-topple row's
-	// own bars - tune to taste.
-	const reformThickness = dominoThickness * 0.5 * REFORM_SCALE_MULTIPLIER;
-	const reformLengthScale = dominoHeightScale * 2 * REFORM_SCALE_MULTIPLIER;
-	const reformBarHalfLengthLocal = (gridTileSize * reformLengthScale) / 2;
-	// Bar:gap is an even 1:1 split - matches the actual scanimation.png texture's own
-	// measured pitch (36px, ~50/50 bar:gap via autocorrelation - see
-	// prototype/scanimation.js), so the scan plane's slide-in below lines up with this
-	// grid's own gaps instead of an arbitrary spacing.
-	const reformSpacingRatio = 2;
-	const reformSpacing = gridTileSize * reformThickness * reformSpacingRatio;
+	// Chapter six's text, same slide-in-and-fade reveal as every other chapter,
+	// played alongside the swarm's own entrance below.
+	const chapterSixTimeline = gsap.timeline({ paused: true })
+		.to('.chapter-six-description', { autoAlpha: 1, ease: 'power1.inOut', duration: 1 }, 0)
+		.to('.split-reveal-six .char', { yPercent: 0, ease: 'power1.inOut', duration: 1, stagger: .001 }, 0);
 
-	// Local X is every bar's own tall axis (same as the pre-topple row and the topple's own
-	// hinge above) - every bar's center sits this same offset from it, so the whole row
-	// lands flush on one shared baseline. Flip to -1 if bars end up dropping in upside down.
-	const reformVerticalSign = 1;
-	const reformBaselineLocalX = 0;
-	const reformBarOffsetLocal = reformBaselineLocalX + reformBarHalfLengthLocal;
-	// Drop distance generous enough to start every bar above the top of frame.
-	const reformDropDistanceLocal = (heroCubeSize * 60) / landingScene.gridToCubeScale;
-	const reformStaggerSpan = DOMINO_REFORM_DURATION * 0.7;
-	const reformDropDuration = DOMINO_REFORM_DURATION - reformStaggerSpan;
-	const reformDropEase = gsap.parseEase('power3.out');
+	const CHAPTER_SIX_HIDE_DURATION = .2;
 
-	const reformCameraRight = new THREE.Vector3();
-	const reformLocalRight = new THREE.Vector3();
+	landingSceneTimeline.call(() => {
+		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			landingScene.enterShapesSwarm();
+			chapterSixTimeline.play();
+		} else {
+			landingScene.exitShapesSwarm();
+			chapterSixTimeline.pause();
+			gsap.to('.chapter-six-description', {
+				autoAlpha: 0,
+				ease: 'power1.in',
+				duration: CHAPTER_SIX_HIDE_DURATION,
+				onComplete: () => chapterSixTimeline.pause(0),
+			});
+		}
+	}, null, SHAPES_SWARM_START);
+	// Consumes SHAPES_SWARM_TAIL's own span so the timeline's real duration extends
+	// past SHAPES_SWARM_START by that much (see its declaration) - without this the
+	// trigger above sits exactly at the pinned range's end, with no scroll distance
+	// left to cross back through to re-fire the reverse (exit) branch.
+	landingSceneTimeline.to({}, { duration: SHAPES_SWARM_TAIL }, SHAPES_SWARM_START);
 
-	// The row centers on wherever the camera is actually looking (at the grid's own
-	// depth), not the grid's own local origin - the two drifted apart back in chapter
-	// five's orbit2 recenter, so anchoring on the grid's origin left the row off-screen-
-	// center. Captured once, the first time any piece's onUpdate runs past
-	// DOMINO_REFORM_START, since the camera itself is fixed for the rest of the timeline.
+	// Closing wipe: a grid of dark dots grows from a seed point near the
+	// bottom-left corner - the growing-circle device from the Bauhaus
+	// exhibition poster reference - staggered outward by distance so it washes
+	// across the screen as one continuous wave rather than popping in all at
+	// once. Neighboring dots overlap once fully grown, so the wave reads as the
+	// dark background being revealed underneath rather than a field of separate
+	// circles. Built once here, against the viewport at setup time, and not
+	// rebuilt on resize - same reasoning as chapters two-five's text above:
+	// rebuilding would orphan the tweens already bound to these elements.
 	//
-	// Nudged down and right from dead-center screen once at capture time, so the grid
-	// settles lower in frame (vertically centered rather than sitting high, under the
-	// nav) and closer to the right edge - tune to taste.
-	const reformAnchorRightOffset = 130;
-	const reformAnchorDownOffset = 170;
-	const reformCamForward = new THREE.Vector3();
-	const reformCaptureCameraRight = new THREE.Vector3();
-	const reformCaptureCameraUp = new THREE.Vector3();
-	const reformAnchorWorld = new THREE.Vector3();
-	const reformAnchorLocal = new THREE.Vector3();
-	let reformAnchorCaptured = false;
-	function reformCaptureAnchor() {
-		if (reformAnchorCaptured) return;
-		reformAnchorCaptured = true;
-		landingScene.camera.updateMatrixWorld();
-		landingScene.camera.getWorldDirection(reformCamForward);
-		const depth = reformAnchorWorld
-			.copy(landingScene.hiddenGrid.position)
-			.sub(landingScene.camera.position)
-			.dot(reformCamForward);
-		reformAnchorWorld.copy(landingScene.camera.position).addScaledVector(reformCamForward, depth);
+	// CHAPTER_SIX_REVEAL_START is kept only as the reference point
+	// SHAPES_SWARM_EXIT_START below is timed backward from, and for the `end`
+	// calc's own scroll-room bookkeeping - the wipe itself no longer fires off
+	// this scroll position directly (see SHAPES_SWARM_EXIT_START's own comment
+	// for why).
+	const CHAPTER_SIX_REVEAL_START = SHAPES_SWARM_START + SHAPES_SWARM_TAIL + CHAPTER_SIX_REVEAL_STOPPAGE;
+	// How long, after exitShapesSwarm() is called, its retreat animation actually
+	// takes to finish (see SWARM_RETREAT_DURATION) plus a small safety margin -
+	// used to position SHAPES_SWARM_EXIT_START far enough ahead of
+	// CHAPTER_SIX_REVEAL_START for the retreat to (at a normal scroll pace)
+	// finish before the wipe starts.
+	const SHAPES_SWARM_EXIT_BUFFER = 0.2;
 
-		reformCaptureCameraRight.setFromMatrixColumn(landingScene.camera.matrixWorld, 0).normalize();
-		reformCaptureCameraUp.setFromMatrixColumn(landingScene.camera.matrixWorld, 1).normalize();
-		reformAnchorWorld
-			.addScaledVector(reformCaptureCameraRight, reformAnchorRightOffset)
-			.addScaledVector(reformCaptureCameraUp, -reformAnchorDownOffset);
+	const revealContainer = document.querySelector('.chapter-six-reveal');
+	const REVEAL_DOT_SPACING = 90; // grid pitch in px - tune to taste
+	// Grown diameter vs. spacing - comfortably past sqrt(2) (~1.42) so a fully grown
+	// dot's own circle covers the diagonal gap to its neighbors, with no seams.
+	const REVEAL_DOT_MAX_SCALE = 1.6;
+	// One extra column/row of overscan on every side so dots centered mid-cell still
+	// cover the viewport's own corners once grown.
+	const revealCols = Math.ceil(window.innerWidth / REVEAL_DOT_SPACING) + 2;
+	const revealRows = Math.ceil(window.innerHeight / REVEAL_DOT_SPACING) + 2;
+	const revealOffsetX = -REVEAL_DOT_SPACING;
+	const revealOffsetY = -REVEAL_DOT_SPACING;
+	// Off-center toward the bottom-left, echoing the reference poster's own
+	// off-center circle rather than a dead-center ripple.
+	const revealSeedX = window.innerWidth * 0.2;
+	const revealSeedY = window.innerHeight * 0.85;
 
-		reformAnchorLocal.copy(reformAnchorWorld)
-			.sub(landingScene.hiddenGrid.position)
-			.applyQuaternion(dominoGroupQuaternionInverse)
-			.divideScalar(landingScene.gridToCubeScale);
+	const revealDots = [];
+	let revealMaxDistance = 0;
+	for (let row = 0; row < revealRows; row++) {
+		for (let col = 0; col < revealCols; col++) {
+			const cx = revealOffsetX + col * REVEAL_DOT_SPACING + REVEAL_DOT_SPACING / 2;
+			const cy = revealOffsetY + row * REVEAL_DOT_SPACING + REVEAL_DOT_SPACING / 2;
+			const distance = Math.hypot(cx - revealSeedX, cy - revealSeedY);
+			revealMaxDistance = Math.max(revealMaxDistance, distance);
+
+			const dot = document.createElement('div');
+			dot.className = 'chapter-six-reveal-dot';
+			dot.style.width = `${REVEAL_DOT_SPACING}px`;
+			dot.style.height = `${REVEAL_DOT_SPACING}px`;
+			dot.style.left = `${cx - REVEAL_DOT_SPACING / 2}px`;
+			dot.style.top = `${cy - REVEAL_DOT_SPACING / 2}px`;
+			revealContainer.appendChild(dot);
+			revealDots.push({ el: dot, distance });
+		}
 	}
 
-	// Ranked by the same left-to-right sweep order used for the pre-topple row, so each
-	// tile's place in the row stays consistent across both phases.
-	const reformScale = new THREE.Vector3(reformLengthScale, reformThickness, reformThickness);
-	landingScene.hiddenGridBasePositions.forEach((_, i) => {
-		const rank = dominoSweepRank[i];
-		const u = reformBarCount > 1 ? rank / (reformBarCount - 1) : 0;
-		const offsetTime = u * reformStaggerSpan; // left to right
-		const rowStep = (rank - reformCenterRank) * reformSpacing;
+	// Retreats the shapes swarm before the wipe below starts covering the
+	// screen, rather than leaving it sitting there mid-cluster underneath the
+	// dots. Timed backward from CHAPTER_SIX_REVEAL_START by the swarm's own
+	// retreat duration plus a small buffer, so the retreat has (at a normal
+	// scroll pace) mostly finished by the time the wipe begins - scrolling
+	// unusually fast through that gap can still catch it mid-retreat, same
+	// trade-off every other scroll-scrubbed beat in this timeline makes.
+	// Scrolling back past this point the other way re-enters the swarm, same
+	// as scrolling back past SHAPES_SWARM_START does on the entrance side.
+	const SHAPES_SWARM_EXIT_START = CHAPTER_SIX_REVEAL_START - SWARM_RETREAT_DURATION - SHAPES_SWARM_EXIT_BUFFER;
+	landingSceneTimeline.call(() => {
+		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			landingScene.exitShapesSwarm();
+		} else {
+			landingScene.enterShapesSwarm();
+		}
+	}, null, SHAPES_SWARM_EXIT_START);
 
-		const targetLocal = new THREE.Vector3();
-		const startLocal = new THREE.Vector3();
-		const position = new THREE.Vector3();
-		const matrix = new THREE.Matrix4();
-		const proxy = { t: 0 };
-		const proxyDuration = DOMINO_REFORM_DURATION - offsetTime;
-
-		landingSceneTimeline.to(proxy, {
-			t: 1,
-			ease: 'none',
-			duration: proxyDuration,
-			onUpdate: () => {
-				console.log('[reformBar]', i, proxy.t);
-				const dropT = reformDropEase(Math.min(proxy.t * proxyDuration / reformDropDuration, 1));
-
-				landingScene.camera.updateMatrixWorld();
-				reformCaptureAnchor();
-				reformCameraRight.setFromMatrixColumn(landingScene.camera.matrixWorld, 0).normalize();
-				reformLocalRight.copy(reformCameraRight).applyQuaternion(dominoGroupQuaternionInverse);
-
-				targetLocal.copy(reformAnchorLocal).addScaledVector(reformLocalRight, rowStep);
-				targetLocal.x += reformVerticalSign * reformBarOffsetLocal;
-				startLocal.copy(targetLocal);
-				startLocal.x += reformVerticalSign * reformDropDistanceLocal;
-
-				position.copy(startLocal).lerp(targetLocal, dropT);
-				matrix.compose(position, dominoIdentityQuaternion, reformScale);
-				landingScene.hiddenGrid.setMatrixAt(i, matrix);
-				landingScene.hiddenGrid.instanceMatrix.needsUpdate = true;
-			},
-		}, DOMINO_REFORM_START + offsetTime);
+	// Every dot's own start delay is proportional to its distance from the seed, so
+	// the wave washes outward continuously; every dot still finishes growing by
+	// CHAPTER_SIX_REVEAL_START + CHAPTER_SIX_REVEAL_DURATION regardless of how far
+	// out it sits, same "stagger span + own duration" split used throughout above.
+	// Scroll-scrubbed, like every other beat in this timeline, rather than
+	// real-time-driven - the wipe's own pace follows scroll speed the same way
+	// the camera moves and phase transitions earlier in the timeline do.
+	const revealStaggerSpan = CHAPTER_SIX_REVEAL_DURATION * 0.6;
+	const revealDotDuration = CHAPTER_SIX_REVEAL_DURATION - revealStaggerSpan;
+	revealDots.forEach(({ el, distance }) => {
+		const offset = revealMaxDistance > 0 ? (distance / revealMaxDistance) * revealStaggerSpan : 0;
+		landingSceneTimeline.fromTo(el, {
+			scale: 0,
+		}, {
+			scale: REVEAL_DOT_MAX_SCALE,
+			ease: 'power2.out', // accelerating-then-settling growth reads as an ink blot, not a linear scale
+			duration: revealDotDuration,
+		}, CHAPTER_SIX_REVEAL_START + offset);
 	});
 
-	// A slight camera orbit around world X, synced with the reform bars' own drop-in
-	// above (same start/duration) so the camera drifts while the grid assembles rather
-	// than as a separate beat. Orbits around the same anchor the grid itself centers on.
-	// Captured once so it starts from the camera's actual settled pose rather than an
-	// assumed one. Flip the sign if 5% reads as tilting the wrong way.
-	const REFORM_ORBIT_ANGLE = THREE.MathUtils.degToRad(360 * 0.05); // "5% around the X axis"
-	const reformOrbitAxis = new THREE.Vector3(1, 0, 0);
-	const reformOrbitPivot = new THREE.Vector3();
-	const reformOrbitStartOffset = new THREE.Vector3();
-	const reformOrbitStartUp = new THREE.Vector3();
-	const reformOrbitOffset = new THREE.Vector3();
-	const reformOrbitUp = new THREE.Vector3();
-	let reformOrbitCaptured = false;
-	const reformOrbitProxy = { t: 0 };
-	landingSceneTimeline.to(reformOrbitProxy, {
-		t: 1,
-		ease: 'power1.inOut',
-		duration: DOMINO_REFORM_DURATION,
-		onUpdate: () => {
-			if (!reformOrbitCaptured) {
-				reformOrbitCaptured = true;
-				reformCaptureAnchor();
-				reformOrbitPivot.copy(reformAnchorWorld);
-				reformOrbitStartOffset.copy(landingScene.camera.position).sub(reformOrbitPivot);
-				reformOrbitStartUp.copy(landingScene.camera.up);
-			}
-			console.log('[reformOrbit]', reformOrbitProxy.t);
-			const angle = REFORM_ORBIT_ANGLE * reformOrbitProxy.t;
-			reformOrbitOffset.copy(reformOrbitStartOffset).applyAxisAngle(reformOrbitAxis, angle);
-			reformOrbitUp.copy(reformOrbitStartUp).applyAxisAngle(reformOrbitAxis, angle);
-			landingScene.camera.position.copy(reformOrbitPivot).add(reformOrbitOffset);
-			landingScene.camera.up.copy(reformOrbitUp);
-			landingScene.camera.lookAt(reformOrbitPivot);
-		},
-	}, DOMINO_REFORM_START);
+	// Right as the dots finish covering the screen, swap the renderer's active
+	// scene to the windows scene - it sits ABOVE .chapter-six-reveal (see
+	// #windows-scene's z-index in style.css), so once the canvas lands there
+	// it renders on top of the dots rather than under them. The dots
+	// themselves aren't touched here: they just stay fully grown as the
+	// dark backdrop, and WindowsScene's own transparent background (its
+	// clearAlpha = 0) is what lets that backdrop show through around the
+	// 3D wall. Scrolling back up past this point swaps back to the landing
+	// scene, and continuing further up shrinks the dots away as normal.
+	const WINDOWS_SWAP_START = CHAPTER_SIX_REVEAL_START + CHAPTER_SIX_REVEAL_DURATION;
+	landingSceneTimeline.call(() => {
+		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			setActiveScene(windowsScene);
+			// Chapter six's own text has nothing left to fade it out (the dot wipe
+			// was always the true finale before this) - hide it now, while the dots
+			// still fully cover the screen, so it doesn't linger over the reveal.
+			gsap.set('.chapter-six-description', { autoAlpha: 0 });
+		} else {
+			setActiveScene(landingScene);
+			gsap.set('.chapter-six-description', { autoAlpha: 1 });
+		}
+	}, null, WINDOWS_SWAP_START);
 
-	// Chapter six's scanimation reveal: the actual barrier-grid texture (see
-	// landingScene.scanPlane, built in landing-scene.js) slides in from off past the
-	// right edge of frame and comes to rest right behind the reform grid above, so its
-	// own baked animation reads through the grid's gaps - the live version of the test
-	// built and measured in prototype/scanimation.js.
-	const SCAN_PLANE_START = DOMINO_REFORM_START + DOMINO_REFORM_DURATION + SCAN_PLANE_STOPPAGE;
-
-	// Measured directly off public/textures/scanimation.png via autocorrelation (see
-	// prototype/scanimation.js) - a rock-solid 36px pitch. The plane is scaled so that
-	// pitch lines up exactly with the reform grid's own (reformSpacing, also a 1:1
-	// bar:gap split now, to match).
-	const SCAN_TEXTURE_PX = 1254;
-	const SCAN_PITCH_PX = 36;
-	const reformSpacingWorld = reformSpacing * landingScene.gridToCubeScale;
-	const scanPlaneWorldSize = reformSpacingWorld * (SCAN_TEXTURE_PX / SCAN_PITCH_PX);
-
-	// Generous enough to start well past the right edge of frame regardless of viewport
-	// width - tune to taste.
-	const scanPlaneOffscreenDistance = scanPlaneWorldSize * 3;
-	// Sits a hair behind the reform grid's own bars (further from the camera along its
-	// own forward axis), so the grid actually occludes it once they line up, rather than
-	// the two fighting for the same depth.
-	const scanPlaneDepthOffset = heroCubeSize * 0.5;
-
-	// The reform bars extend a full length OUT from reformAnchorWorld along their own
-	// tall axis (it's their baseline/bottom edge, not their middle - see
-	// reformBarOffsetLocal above), so the grid's true visual center sits this same
-	// offset further along that axis. Local X is that tall axis (see the pre-topple row
-	// and topple's own hinge above) - converted to world via the grid's own rotation
-	// rather than assumed, so this still holds on portrait's extra rotation.z.
-	const reformWorldTallAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(landingScene.hiddenGrid.quaternion);
-	const scanCenterOffset = reformVerticalSign * reformBarOffsetLocal * landingScene.gridToCubeScale;
-
-	const scanCamForward = new THREE.Vector3();
-	const scanCameraRight = new THREE.Vector3();
-	const scanTarget = new THREE.Vector3();
-	const scanStart = new THREE.Vector3();
-	const scanPlaneProxy = { t: 0 };
-	// Hidden until this phase is actually reached (and re-hidden on reverse scroll) -
-	// same "compare against last known state" toggle chapter five's wall-vanish uses,
-	// since a plain visible=true at setup time would show it from page load, sitting
-	// wherever it defaults to, long before chapter six.
-	let scanPlaneVisible = false;
-	// The plane sits scanPlaneDepthOffset further from the camera than the grid itself
-	// (see above) - under this perspective camera, that extra distance alone makes a
-	// same-world-size pitch project smaller on screen than the grid's, so gaps and bars
-	// drift out of sync the further across the pattern you look. Scaling the plane up by
-	// its own distance ratio (sized once the anchor/camera distance is known, both fixed
-	// for the rest of the timeline) cancels that foreshortening out.
-	let scanPlaneSized = false;
-	landingSceneTimeline.to(scanPlaneProxy, {
+	// Small scroll-driven camera move once the windows scene is showing -
+	// a gentle dolly-in with a slight pan. Combined additively in
+	// WindowsScene#update() with its own mouse-parallax offset, rather than one
+	// overriding the other.
+	const WINDOWS_CAMERA_START = WINDOWS_SWAP_START;
+	// Explicit from/to (not live-captured) so a resize-triggered ScrollTrigger
+	// refresh can't re-capture a stale mid-scroll position as this tween's start -
+	// same reasoning as chapter three's directional-light fromTo above.
+	const windowsCameraFrom = {
+		position: windowsScene.scrollCameraBase.position.clone(),
+		lookAt: windowsScene.scrollCameraBase.lookAt.clone(),
+	};
+	const windowsCameraTo = {
+		position: new THREE.Vector3(1.5, -0.5, 6),
+		lookAt: new THREE.Vector3(0.5, 0, -5),
+	};
+	const windowsCamera = { t: 0 };
+	landingSceneTimeline.fromTo(windowsCamera, {
+		t: 0,
+	}, {
 		t: 1,
 		ease: 'power2.inOut',
-		duration: SCAN_PLANE_DURATION,
+		duration: WINDOWS_CAMERA_DURATION,
 		onUpdate: () => {
-			const shouldShow = scanPlaneProxy.t > 0;
-			if (shouldShow !== scanPlaneVisible) {
-				scanPlaneVisible = shouldShow;
-				landingScene.scanPlane.visible = shouldShow;
-			}
-			if (!scanPlaneVisible) return;
-
-			landingScene.camera.updateMatrixWorld();
-			reformCaptureAnchor(); // same lazy anchor the reform grid itself centers on
-
-			if (!scanPlaneSized) {
-				scanPlaneSized = true;
-				const gridDistance = landingScene.camera.position.distanceTo(reformAnchorWorld);
-				const scanPlaneDistance = gridDistance + scanPlaneDepthOffset;
-				const perspectiveCorrection = scanPlaneDistance / gridDistance;
-				const correctedSize = scanPlaneWorldSize * perspectiveCorrection;
-				landingScene.scanPlane.scale.set(correctedSize, correctedSize, 1);
-			}
-
-			landingScene.camera.getWorldDirection(scanCamForward);
-			scanCameraRight.setFromMatrixColumn(landingScene.camera.matrixWorld, 0).normalize();
-
-			scanTarget.copy(reformAnchorWorld)
-				.addScaledVector(reformWorldTallAxis, scanCenterOffset)
-				.addScaledVector(scanCamForward, scanPlaneDepthOffset);
-			scanStart.copy(scanTarget).addScaledVector(scanCameraRight, scanPlaneOffscreenDistance);
-
-			landingScene.scanPlane.position.copy(scanStart).lerp(scanTarget, scanPlaneProxy.t);
-			landingScene.scanPlane.quaternion.copy(landingScene.camera.quaternion); // always faces the camera
+			windowsScene.scrollCameraBase.position.lerpVectors(windowsCameraFrom.position, windowsCameraTo.position, windowsCamera.t);
+			windowsScene.scrollCameraBase.lookAt.lerpVectors(windowsCameraFrom.lookAt, windowsCameraTo.lookAt, windowsCamera.t);
 		},
-	}, SCAN_PLANE_START);
+	}, WINDOWS_CAMERA_START);
 
 };
-
-// // Setup gsap animations
-// gsap.to('#second-scene', {
-// 	backgroundColor: 'red',
-// 	duration:.1,
-// 	ease:'power1.inOut',
-// 	scrollTrigger: {
-// 		trigger:'#second-scene',
-// 		start: 'top center',
-// 		toggleActions: 'play none none reverse'
-// 	},
-// 	onStart: ()=> {
-// 		setActiveScene(secondScene);
-// 	},
-// 	onReverseComplete: ()=> {
-// 		setActiveScene(firstScene);
-
-// 	}
-// })
 

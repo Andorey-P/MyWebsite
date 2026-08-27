@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
 import { RGBELoader } from 'three/examples/jsm/Addons.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
@@ -35,6 +36,55 @@ const TARGET_Y_FINAL_PORTRAIT = 1700;
 // size, per main.js's chapter four choreography.
 const WALL_HALF_HEIGHT = 500;
 
+// Chapter six's shapes swarm (see buildShapesSwarm/enterShapesSwarm/
+// exitShapesSwarm): 3D die-cut shapes held in a constantly-attracting,
+// physically-collided cluster. These constants were tuned standalone in
+// prototype/shapes-attraction.html, in a small "local" unit scale (cluster
+// settles to roughly SWARM_REFERENCE_CLUSTER_RADIUS) - rather than retune them
+// to this scene's own much larger world units, the whole swarm is built in that
+// same local scale and wrapped in a group whose position/scale places it
+// correctly on screen (see buildShapesSwarm), so the tuned feel carries over
+// exactly.
+const SWARM_SHAPE_COUNT = 50;
+const SWARM_ATTRACT_K = 6;
+const SWARM_LINEAR_DAMPING = 0.88;
+const SWARM_ANGULAR_DAMPING = 1;
+const SWARM_REPEL_RADIUS = 15;
+const SWARM_REPEL_STRENGTH = 600; // 2x - mouse push should read as a much harder shove
+const SWARM_REFERENCE_CLUSTER_RADIUS = 7;
+// Individual shape size range, in the swarm's own local units (same scale as
+// SWARM_REFERENCE_CLUSTER_RADIUS above) - "dot" is its own smaller range since
+// it's meant to read as the reference image's tiny scattered accents, not a
+// shape on par with the rest.
+const SWARM_SHAPE_SIZE_MIN = 1.6;
+const SWARM_SHAPE_SIZE_MAX = 4.2;
+const SWARM_DOT_SIZE_MIN = 0.7;
+const SWARM_DOT_SIZE_MAX = 1.3;
+// How long, in seconds, a scroll-back retreat takes to lerp every shape from
+// wherever it currently is back out to its own spawn position. Exported so
+// main.js can time a scroll-driven exitShapesSwarm() call (e.g. before the
+// closing wipe) far enough ahead for the retreat to actually finish.
+export const SWARM_RETREAT_DURATION = 1.3;
+// Screen placement: fraction of viewport width/height (0..1, top-left origin)
+// the cluster's own local origin should project to once placed.
+const SWARM_SCREEN_X = 0.6;
+const SWARM_SCREEN_Y = 0.5;
+// Fraction of the visible frame height, at the swarm's own placement depth, its
+// settled radius should occupy on screen.
+const SWARM_SCREEN_RADIUS_FRACTION = 0.4;
+
+const SWARM_COLORS = [
+	// PALETTE.brick,
+  // PALETTE.slate,
+  // PALETTE.ochre,
+  // PALETTE.clay,
+	PALETTE.ink, 
+	PALETTE.ink, 
+	PALETTE.ink, 
+	PALETTE.ink, 
+	PALETTE.signalRed, // rare saturated accent
+];
+
 export default class LandingScene extends BaseThreeJS{
   constructor(containerId, loadingManager, renderer){
     super(containerId, loadingManager, renderer);
@@ -59,6 +109,11 @@ export default class LandingScene extends BaseThreeJS{
     // drive camera.position/up directly without update() lerping it back
     // toward the idle target every frame right behind it.
     this.lockIdleLook = false;
+    // Shapes swarm (see buildShapesSwarm/enterShapesSwarm/exitShapesSwarm):
+    // 'hidden' (not built yet, or fully retreated) | 'active' (flying in/settled,
+    // simulating normally) | 'retreating' (lerping back out to spawn positions).
+    this.shapesSwarmBuilt = false;
+    this.shapesSwarmState = 'hidden';
     this.onDocumentMouseMove = this.onDocumentMouseMove.bind(this);
     document.addEventListener( 'mousemove', this.onDocumentMouseMove );
 
@@ -436,26 +491,6 @@ export default class LandingScene extends BaseThreeJS{
     this.hiddenGrid.instanceMatrix.needsUpdate = true;
     this.scene.add(this.hiddenGrid);
 
-    // Chapter six's scanimation reveal - the actual barrier-grid asset (public/
-    // textures/scanimation.png), tested and measured in prototype/scanimation.js
-    // before landing here (pixel-measured via autocorrelation: a 36px pitch, ~50/50
-    // bar:gap split - see main.js's chapter six section for the actual numbers).
-    // Unit-sized (1x1) and hidden until main.js scales/positions/animates it against
-    // the reform grid's own matching pitch.
-    const scanTexLoader = new THREE.TextureLoader(this.loadingManager);
-    const scanTexture = scanTexLoader.load('./textures/scanimation.png');
-    const scanPlaneGeometry = new THREE.PlaneGeometry(1, 1);
-    const scanPlaneMaterial = new THREE.MeshBasicMaterial({
-      color: PALETTE.brick, // the site's own orange, used throughout the UI chrome
-      alphaMap: scanTexture,
-      transparent: true,
-      alphaTest: 0.5, // a hard cutout, not a soft blend - matches the prototype
-      side: THREE.DoubleSide,
-    });
-    this.scanPlane = new THREE.Mesh(scanPlaneGeometry, scanPlaneMaterial);
-    this.scanPlane.visible = false;
-    this.scene.add(this.scanPlane);
-
     // Chapter four's ground shadow catcher - a plane sitting just below the
     // hidden grid's own tile bottoms, invisible everywhere except where a
     // shadow actually falls on it (THREE.ShadowMaterial renders nothing but
@@ -576,6 +611,11 @@ export default class LandingScene extends BaseThreeJS{
   }
 
   update() {
+    // Runs every frame regardless of lockIdleLook - the swarm is scroll-driven
+    // (activated once, then just keeps simulating), not part of the mouse-driven
+    // idle look this early-return below gates.
+    this.updateShapesSwarm(Math.min(this.clock.getDelta(), 1 / 30));
+
     if (this.lockIdleLook) return;
 
     // Calculate a scale factor for movement and lerping based on the camera's z position
@@ -800,6 +840,342 @@ export default class LandingScene extends BaseThreeJS{
     const outputPass = new OutputPass();
     this.composer.addPass( outputPass );
 
+  }
+
+  // Builds the shapes swarm's physics bodies and instanced meshes the first time
+  // it's needed (see enterShapesSwarm, which calls this lazily then drives the
+  // actual show/hide). Placed relative to the camera's own current position/
+  // orientation rather than a hardcoded world position - by the time this fires
+  // (right after chapter five's dominoes clear the frame) chapter four/five's own
+  // camera orbit has already finished moving, so the camera is fixed and this
+  // placement holds for the rest of the scene.
+  buildShapesSwarm() {
+    this.shapesSwarmBuilt = true;
+
+    this.camera.updateMatrixWorld();
+    const forward = new THREE.Vector3();
+    this.camera.getWorldDirection(forward);
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
+    // Distance to the world origin, where the scene's own action (grid/cube/walls)
+    // sits by this point - used as the swarm's own placement depth.
+    const depth = this.camera.position.length();
+
+    const halfHeight = Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * depth;
+    const halfWidth = halfHeight * this.camera.aspect;
+    const offsetX = (SWARM_SCREEN_X - 0.5) * 2 * halfWidth;
+    const offsetY = (0.5 - SWARM_SCREEN_Y) * 2 * halfHeight; // screen Y grows downward, world "up" grows upward
+
+    const anchor = new THREE.Vector3()
+      .copy(this.camera.position)
+      .addScaledVector(forward, depth)
+      .addScaledVector(right, offsetX)
+      .addScaledVector(up, offsetY);
+
+    // Solves for the group scale that makes the swarm's own tuned settle radius
+    // (SWARM_REFERENCE_CLUSTER_RADIUS, in its local unit scale) occupy the desired
+    // fraction of the visible frame at this depth.
+    const worldScale = (halfHeight * SWARM_SCREEN_RADIUS_FRACTION) / SWARM_REFERENCE_CLUSTER_RADIUS;
+
+    this.shapesSwarmGroup = new THREE.Group();
+    this.shapesSwarmGroup.visible = false; // enterShapesSwarm shows it once spawn positions are set
+    this.shapesSwarmGroup.position.copy(anchor);
+    this.shapesSwarmGroup.quaternion.copy(this.camera.quaternion);
+    this.shapesSwarmGroup.scale.setScalar(worldScale);
+    this.scene.add(this.shapesSwarmGroup);
+    this.shapesSwarmGroup.updateMatrixWorld(true);
+    // Cached once - the group never moves again after this, so re-deriving this
+    // every frame in applyShapesSwarmPointerRepulsion would be wasted work.
+    this.shapesSwarmInverseMatrix = new THREE.Matrix4().copy(this.shapesSwarmGroup.matrixWorld).invert();
+
+    // Spawn shell sized off the actual visible frame (converted into local units
+    // via worldScale) rather than a fixed constant, so shapes always start past
+    // the frame's own corner-to-corner diagonal, comfortably outside the
+    // viewport, regardless of how large SWARM_SCREEN_RADIUS_FRACTION makes the
+    // settled cluster itself.
+    const frameDiagonal = Math.sqrt(halfWidth * halfWidth + halfHeight * halfHeight);
+    // 3x the frame's own corner-to-corner diagonal, not just barely past it - with
+    // SWARM_ATTRACT_K tuned strong (shapes cover a lot of distance fast), a merely
+    // "just outside" margin gets crossed back into frame within a fraction of a
+    // second, reading as shapes popping in rather than flying in. This buys real
+    // travel time before that happens, regardless of how fast the pull is tuned.
+    const spawnRadiusLocal = (frameDiagonal * 3) / worldScale;
+
+    this.shapesWorld = new CANNON.World();
+    this.shapesWorld.gravity.set(0, 0, 0); // no fall - shapes are held only by central attraction
+    this.shapesWorld.broadphase = new CANNON.SAPBroadphase(this.shapesWorld);
+    this.shapesWorld.allowSleep = false;
+
+    const contactMaterial = new CANNON.Material('shape');
+    this.shapesWorld.defaultContactMaterial = new CANNON.ContactMaterial(contactMaterial, contactMaterial, {
+      friction: 0.3,
+      restitution: 0.15, // low bounce - contact energy bleeds off instead of feeding spin/velocity back in
+    });
+
+    // Each type: how to build its Three geometry (unit-scale, actual size applied
+    // via instance matrix) and its cannon-es collision shape at a given size.
+    // smooth:true keeps that type's curved surface smoothly shaded rather than
+    // faceted - only genuinely flat-faced primitives default to flat shading.
+    const TYPES = {
+      sphere: { weight: 3, geometry: new THREE.SphereGeometry(0.5, 32, 24), smooth: true, makeShape: (s) => new CANNON.Sphere(s * 0.5) },
+      dot: { weight: 2, geometry: new THREE.SphereGeometry(0.5, 20, 16), smooth: true, makeShape: (s) => new CANNON.Sphere(s * 0.5) },
+      box: { weight: 2, geometry: new THREE.BoxGeometry(1, 1, 1), makeShape: (s) => new CANNON.Box(new CANNON.Vec3(s * 0.5, s * 0.5, s * 0.5)) },
+      octahedron: { weight: 1.5, geometry: new THREE.OctahedronGeometry(0.65), makeShape: (s) => this.buildOctahedronHull(s * 0.65) },
+      tetrahedron: { weight: 1.2, geometry: new THREE.TetrahedronGeometry(0.65), makeShape: (s) => this.buildTetrahedronHull(s * 0.4) },
+    };
+    const typeKeys = Object.keys(TYPES);
+    const pickWeighted = () => {
+      const total = typeKeys.reduce((sum, k) => sum + TYPES[k].weight, 0);
+      let r = Math.random() * total;
+      for (const k of typeKeys) {
+        r -= TYPES[k].weight;
+        if (r <= 0) return k;
+      }
+      return typeKeys[typeKeys.length - 1];
+    };
+
+    // Each shape's type is picked exactly once, into this list - both the
+    // per-type InstancedMesh capacity below and the body/instance creation loop
+    // read from it, so the two stay in sync (picking independently twice would
+    // let the random draws disagree and overflow a mesh's allocated instance
+    // count).
+    const pickedTypes = Array.from({ length: SWARM_SHAPE_COUNT }, pickWeighted);
+    const countByType = {};
+    for (const type of pickedTypes) countByType[type] = (countByType[type] || 0) + 1;
+
+    this.shapesSwarmShapes = [];
+    this.shapesSwarmMeshes = {};
+    const nextIndexByType = {};
+    for (const type of typeKeys) {
+      const count = countByType[type] || 0;
+      if (count === 0) continue;
+      const material = new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0, flatShading: !TYPES[type].smooth });
+      const mesh = new THREE.InstancedMesh(TYPES[type].geometry, material, count);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.castShadow = true;
+      this.shapesSwarmGroup.add(mesh);
+      this.shapesSwarmMeshes[type] = mesh;
+      nextIndexByType[type] = 0;
+    }
+
+    const dummy = new THREE.Object3D();
+    const color = new THREE.Color();
+
+    for (let i = 0; i < SWARM_SHAPE_COUNT; i++) {
+      const type = pickedTypes[i];
+      const size = type === 'dot'
+        ? SWARM_DOT_SIZE_MIN + Math.random() * (SWARM_DOT_SIZE_MAX - SWARM_DOT_SIZE_MIN)
+        : SWARM_SHAPE_SIZE_MIN + Math.random() * (SWARM_SHAPE_SIZE_MAX - SWARM_SHAPE_SIZE_MIN);
+      const c = SWARM_COLORS[(Math.random() * SWARM_COLORS.length) | 0];
+
+      // Spawn on a ring in the group's own local XY plane (screen-plane, since
+      // the group's quaternion matches the camera's), not a full 3D sphere - a
+      // uniformly-random 3D direction spends most of its radius on local Z
+      // (camera depth), which barely moves a point's on-screen position at all
+      // (perspective projection only cares about X/Y over depth), so shapes could
+      // land with most of their "distance" invisible to the viewer and pop in
+      // within frame despite technically being spawnRadiusLocal away in 3D. A
+      // small Z jitter (relative to the settled cluster's own size, not the huge
+      // spawn radius) still gives spawn depth some variety without undermining
+      // the guarantee.
+      const angle = Math.random() * Math.PI * 2;
+      const ringRadius = spawnRadiusLocal * (1 + Math.random() * 0.5);
+      const depthJitter = (Math.random() * 2 - 1) * SWARM_REFERENCE_CLUSTER_RADIUS * 3;
+      const spawnPosition = new THREE.Vector3(Math.cos(angle) * ringRadius, Math.sin(angle) * ringRadius, depthJitter);
+      const spawnQuaternion = new THREE.Quaternion().setFromEuler(
+        new THREE.Euler(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI)
+      );
+
+      const body = new CANNON.Body({
+        mass: size,
+        shape: TYPES[type].makeShape(size),
+        position: new CANNON.Vec3(spawnPosition.x, spawnPosition.y, spawnPosition.z),
+        material: contactMaterial,
+        linearDamping: SWARM_LINEAR_DAMPING,
+        angularDamping: SWARM_ANGULAR_DAMPING,
+      });
+      body.quaternion.set(spawnQuaternion.x, spawnQuaternion.y, spawnQuaternion.z, spawnQuaternion.w);
+      this.shapesWorld.addBody(body);
+
+      const instanceIndex = nextIndexByType[type]++;
+      const mesh = this.shapesSwarmMeshes[type];
+      dummy.position.copy(spawnPosition);
+      dummy.scale.setScalar(size);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(instanceIndex, dummy.matrix);
+      mesh.setColorAt(instanceIndex, color.set(c));
+
+      this.shapesSwarmShapes.push({
+        type, size, body, instanceIndex, spawnPosition, spawnQuaternion,
+        retreatFrom: new THREE.Vector3(),
+        retreatFromQuat: new THREE.Quaternion(),
+      });
+    }
+    for (const mesh of Object.values(this.shapesSwarmMeshes)) {
+      mesh.instanceColor.needsUpdate = true;
+    }
+
+    // Scratch objects reused every frame in updateShapesSwarm/
+    // applyShapesSwarmPointerRepulsion, to avoid allocating per-shape per-frame.
+    this.shapesSwarmDummy = dummy;
+    this.shapesSwarmCenterForce = new CANNON.Vec3();
+    this.shapesSwarmRaycaster = new THREE.Raycaster();
+    this.shapesSwarmPointerNDC = new THREE.Vector2(-10, -10);
+    this.shapesSwarmPointerActive = false;
+    this.shapesSwarmRayOriginLocal = new THREE.Vector3();
+    this.shapesSwarmRayFarLocal = new THREE.Vector3();
+    this.shapesSwarmToBody = new THREE.Vector3();
+    this.shapesSwarmClosestPoint = new THREE.Vector3();
+    this.shapesSwarmPushDir = new THREE.Vector3();
+    this.shapesSwarmRetreatQuat = new THREE.Quaternion();
+
+    this.onShapesSwarmPointerMove = this.onShapesSwarmPointerMove.bind(this);
+    this.onShapesSwarmPointerLeave = this.onShapesSwarmPointerLeave.bind(this);
+    window.addEventListener('pointermove', this.onShapesSwarmPointerMove);
+    window.addEventListener('pointerleave', this.onShapesSwarmPointerLeave);
+  }
+
+  // Scroll forward past the trigger: builds the swarm on first call, then resets
+  // every shape back to its own spawn position/orientation outside the viewport
+  // and lets it fly inward under normal attraction physics - so crossing this
+  // point always replays the same entrance, even on a second pass after a
+  // scroll-back retreat.
+  enterShapesSwarm() {
+    if (!this.shapesSwarmBuilt) this.buildShapesSwarm();
+    this.shapesSwarmGroup.visible = true;
+    this.shapesSwarmState = 'active';
+    for (const s of this.shapesSwarmShapes) {
+      s.body.position.set(s.spawnPosition.x, s.spawnPosition.y, s.spawnPosition.z);
+      s.body.velocity.set(0, 0, 0);
+      s.body.angularVelocity.set(0, 0, 0);
+      s.body.quaternion.set(s.spawnQuaternion.x, s.spawnQuaternion.y, s.spawnQuaternion.z, s.spawnQuaternion.w);
+    }
+  }
+
+  // Scroll back past the trigger: instead of just vanishing, every shape lerps
+  // from wherever it currently is back out to its own spawn position (the same
+  // outside-the-viewport shell it flew in from) - see updateShapesSwarm's
+  // 'retreating' branch, which drives the actual interpolation and hides the
+  // group once it finishes.
+  exitShapesSwarm() {
+    if (!this.shapesSwarmBuilt || this.shapesSwarmState === 'hidden') return;
+    this.shapesSwarmState = 'retreating';
+    this.shapesSwarmRetreatT = 0;
+    for (const s of this.shapesSwarmShapes) {
+      s.retreatFrom.copy(s.body.position);
+      s.retreatFromQuat.copy(s.body.quaternion);
+    }
+  }
+
+  // Convex hulls for the platonic solids cannon-es has no built-in primitive for.
+  buildOctahedronHull(r) {
+    const v = [
+      new CANNON.Vec3(r, 0, 0), new CANNON.Vec3(-r, 0, 0),
+      new CANNON.Vec3(0, r, 0), new CANNON.Vec3(0, -r, 0),
+      new CANNON.Vec3(0, 0, r), new CANNON.Vec3(0, 0, -r),
+    ];
+    const faces = [
+      [0, 2, 4], [2, 1, 4], [1, 3, 4], [3, 0, 4],
+      [2, 0, 5], [1, 2, 5], [3, 1, 5], [0, 3, 5],
+    ];
+    return new CANNON.ConvexPolyhedron({ vertices: v, faces });
+  }
+
+  buildTetrahedronHull(r) {
+    const v = [
+      new CANNON.Vec3(r, r, r), new CANNON.Vec3(r, -r, -r),
+      new CANNON.Vec3(-r, r, -r), new CANNON.Vec3(-r, -r, r),
+    ];
+    const faces = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]];
+    return new CANNON.ConvexPolyhedron({ vertices: v, faces });
+  }
+
+  onShapesSwarmPointerMove(event) {
+    this.shapesSwarmPointerNDC.x = (event.clientX / window.innerWidth) * 2 - 1;
+    this.shapesSwarmPointerNDC.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    this.shapesSwarmPointerActive = true;
+  }
+
+  onShapesSwarmPointerLeave() {
+    this.shapesSwarmPointerActive = false;
+  }
+
+  // Pushes any body whose position falls within SWARM_REPEL_RADIUS of the mouse's
+  // 3D sightline (not just its depth-plane projection), so the repulsion reads as
+  // a beam through the scene rather than a flat disc at one fixed depth. The ray
+  // is transformed into the swarm group's own local space (via the inverse matrix
+  // cached in buildShapesSwarm) so this still compares against
+  // SWARM_REPEL_RADIUS in the physics' own originally-tuned unit scale, regardless
+  // of how large the group actually is in the scene.
+  applyShapesSwarmPointerRepulsion() {
+    if (!this.shapesSwarmPointerActive) return;
+    this.shapesSwarmRaycaster.setFromCamera(this.shapesSwarmPointerNDC, this.camera);
+    const worldOrigin = this.shapesSwarmRaycaster.ray.origin;
+    const worldFar = this.shapesSwarmRayFarLocal.copy(worldOrigin).addScaledVector(this.shapesSwarmRaycaster.ray.direction, 1000);
+
+    const rayOrigin = this.shapesSwarmRayOriginLocal.copy(worldOrigin).applyMatrix4(this.shapesSwarmInverseMatrix);
+    const rayDir = worldFar.applyMatrix4(this.shapesSwarmInverseMatrix).sub(rayOrigin).normalize();
+
+    for (const s of this.shapesSwarmShapes) {
+      const p = s.body.position;
+      this.shapesSwarmToBody.set(p.x, p.y, p.z).sub(rayOrigin);
+      const t = Math.max(0, this.shapesSwarmToBody.dot(rayDir));
+      this.shapesSwarmClosestPoint.copy(rayOrigin).addScaledVector(rayDir, t);
+      this.shapesSwarmPushDir.set(p.x, p.y, p.z).sub(this.shapesSwarmClosestPoint);
+      const dist = this.shapesSwarmPushDir.length();
+      if (dist < SWARM_REPEL_RADIUS && dist > 0.0001) {
+        const falloff = 1 - dist / SWARM_REPEL_RADIUS;
+        const force = SWARM_REPEL_STRENGTH * falloff * falloff;
+        this.shapesSwarmPushDir.multiplyScalar(force / dist);
+        s.body.applyForce(new CANNON.Vec3(this.shapesSwarmPushDir.x, this.shapesSwarmPushDir.y, this.shapesSwarmPushDir.z), s.body.position);
+      }
+    }
+  }
+
+  updateShapesSwarm(dt) {
+    if (this.shapesSwarmState === 'hidden') return;
+
+    if (this.shapesSwarmState === 'retreating') {
+      this.shapesSwarmRetreatT = Math.min(this.shapesSwarmRetreatT + dt / SWARM_RETREAT_DURATION, 1);
+      const eased = this.shapesSwarmRetreatT * this.shapesSwarmRetreatT * (3 - 2 * this.shapesSwarmRetreatT); // smoothstep
+      for (const s of this.shapesSwarmShapes) {
+        s.body.position.set(
+          THREE.MathUtils.lerp(s.retreatFrom.x, s.spawnPosition.x, eased),
+          THREE.MathUtils.lerp(s.retreatFrom.y, s.spawnPosition.y, eased),
+          THREE.MathUtils.lerp(s.retreatFrom.z, s.spawnPosition.z, eased),
+        );
+        s.body.velocity.set(0, 0, 0);
+        s.body.angularVelocity.set(0, 0, 0);
+        this.shapesSwarmRetreatQuat.slerpQuaternions(s.retreatFromQuat, s.spawnQuaternion, eased);
+        s.body.quaternion.set(this.shapesSwarmRetreatQuat.x, this.shapesSwarmRetreatQuat.y, this.shapesSwarmRetreatQuat.z, this.shapesSwarmRetreatQuat.w);
+      }
+      if (this.shapesSwarmRetreatT >= 1) {
+        this.shapesSwarmState = 'hidden';
+        this.shapesSwarmGroup.visible = false;
+      }
+    } else {
+      for (const s of this.shapesSwarmShapes) {
+        const p = s.body.position;
+        this.shapesSwarmCenterForce.set(-p.x, -p.y, -p.z).scale(SWARM_ATTRACT_K * s.body.mass, this.shapesSwarmCenterForce);
+        s.body.applyForce(this.shapesSwarmCenterForce, s.body.position);
+      }
+      this.applyShapesSwarmPointerRepulsion();
+      this.shapesWorld.step(1 / 60, dt, 5);
+    }
+
+    for (const s of this.shapesSwarmShapes) {
+      const mesh = this.shapesSwarmMeshes[s.type];
+      const p = s.body.position;
+      const q = s.body.quaternion;
+      this.shapesSwarmDummy.position.set(p.x, p.y, p.z);
+      this.shapesSwarmDummy.quaternion.set(q.x, q.y, q.z, q.w);
+      this.shapesSwarmDummy.scale.setScalar(s.size);
+      this.shapesSwarmDummy.updateMatrix();
+      mesh.setMatrixAt(s.instanceIndex, this.shapesSwarmDummy.matrix);
+    }
+    for (const mesh of Object.values(this.shapesSwarmMeshes)) {
+      mesh.instanceMatrix.needsUpdate = true;
+    }
   }
 
 }

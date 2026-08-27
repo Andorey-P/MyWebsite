@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<title>Door &amp; Stairs Prototype</title>
+	<style>
+		/* Height is set in JS (see setPageHeight() in door-stairs.js) - it has
+		   to match the scroll-driven timeline's own total duration, or the
+		   page runs out of room to scroll before the timeline finishes. */
+		html, body { margin: 0; background: #000; }
+		canvas { position: fixed; inset: 0; display: block; }
+		#hint {
+			position: fixed; left: 16px; bottom: 12px; z-index: 10;
+			font: 12px/1.4 system-ui, sans-serif; color: #999; opacity: 0.8;
+		}
+	</style>
+</head>
+<body>
+	<div id="hint">scroll to grow the door</div>
+	<script type="module" src="./door-stairs.js"></script>
+</body>
+</html>

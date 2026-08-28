@@ -17,11 +17,10 @@ gsap.registerPlugin(ScrollTrigger);
 
 const DOOR_WIDTH = 220; // matches the width the stairs will spill out at
 const DOOR_HEIGHT = 260;
-const DOOR_DEPTH = 150; // how far the hollow doorway tunnel stretches toward +Z
+const DOOR_DEPTH = 300; // how far the hollow doorway tunnel stretches toward +Z
 const FLOOR_WIDTH = DOOR_WIDTH;
 const FLOOR_DEPTH = 320;
 const FLOOR_TARGET_SCALE = 0.5; // the floor's own tween below only opens it halfway
-const FLOOR_ACTUAL_DEPTH = FLOOR_DEPTH * FLOOR_TARGET_SCALE;
 
 const STAIR_COUNT = 9;
 const STAIR_WIDTH = FLOOR_WIDTH;
@@ -84,49 +83,96 @@ controls.update();
 // tricks - what you see in each mesh's own rotation/position is the whole
 // story.
 //
-// door itself is a Group (not a mesh) so `door.scale.z` still drives the
-// same open-on-scroll animation as before, applied to all 5 children at once.
+// door itself is just a plain container now (identity scale/position) - the
+// open-on-scroll reveal isn't one group-wide tween anymore. Right stays
+// completely static; left/bottom each grow individually via scale, along
+// whichever one of their own local axes actually has real extent to shrink
+// (same "translate geometry so the pivot sits at the growing edge, then
+// scale that one mesh" trick floor/stairs already use, just applied per
+// door plane instead of once at the group level); top is never scaled at
+// all and instead just rises into place via a position tween.
 const door = new THREE.Group();
-door.scale.z = 0;
 scene.add(door);
 
 const wallMaterial = () => new THREE.MeshBasicMaterial({ color: 0xffffff });
 
-// Left plane - normal toward +X.
-const leftPlane = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_DEPTH, DOOR_HEIGHT), wallMaterial());
+// Left plane - normal toward +X. Full depth always (its local X, which maps
+// to world Z here, is never touched); the reveal is scale.y alone, pivoting
+// at the bottom edge - geometry translated so local y runs [0, DOOR_HEIGHT]
+// instead of the default centered [-DOOR_HEIGHT/2, DOOR_HEIGHT/2], position
+// moved down to y=-DOOR_HEIGHT to match, so scale.y=0 collapses the whole
+// plane flush to the bottom and scale.y=1 rises it up to its normal
+// [-DOOR_HEIGHT, 0] span.
+const leftPlaneGeometry = new THREE.PlaneGeometry(DOOR_DEPTH, DOOR_HEIGHT);
+leftPlaneGeometry.translate(0, DOOR_HEIGHT / 2, 0);
+const leftPlane = new THREE.Mesh(leftPlaneGeometry, wallMaterial());
 leftPlane.rotation.y = Math.PI / 2;
-leftPlane.position.set(-DOOR_WIDTH / 2, -DOOR_HEIGHT / 2, DOOR_DEPTH / 2);
+leftPlane.position.set(-DOOR_WIDTH / 2, -DOOR_HEIGHT, DOOR_DEPTH / 2);
+leftPlane.scale.y = 0;
 door.add(leftPlane);
 
-// Top plane - normal toward -Y.
+// Top plane - normal toward -Y. Never scaled - full width and full depth
+// always. The reveal is a position tween instead (see the timeline below):
+// it starts down at floor level (y=-DOOR_HEIGHT, same as bottomPlane) and
+// rises to its actual ceiling height (y=0) as the door opens.
 const topPlane = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_WIDTH, DOOR_DEPTH), wallMaterial());
 topPlane.rotation.x = Math.PI / 2;
-topPlane.position.set(0, 0, DOOR_DEPTH / 2);
+topPlane.position.set(0, -DOOR_HEIGHT, DOOR_DEPTH / 2);
 door.add(topPlane);
 
-// Right plane - normal toward -X, but transparent + occluding. The "correct"
-// way to do this is colorWrite: false (never paints its own color) with
-// depthWrite still on, so it blocks anything behind it via ordinary depth
-// testing without ever drawing itself - tried that first, but it didn't
-// reliably occlude here (confirmed with a color-coded test: a blue plane
-// placed behind it showed through instead of being blocked, even though
-// depthWrite was on). Rather than depend on that, this is an ordinary fully
-// opaque plane - ordinary colorWrite:true rendering, so occlusion is exactly
-// as reliable as any other solid object in the scene - just colored to match
-// scene.background (black), so it reads as invisible without needing any
-// masking trick at all.
+// Right side is two coplanar planes, not one, because the camera looks at it
+// from both directions over the course of the scroll: from outside/in-front
+// while the door is still closed, then from inside once the door has opened
+// and the camera has pushed through into the tunnel/stairs.
+//
+// Outer occluder - normal toward -X, but transparent + occluding. The
+// "correct" way to do this is colorWrite: false (never paints its own color)
+// with depthWrite still on, so it blocks anything behind it via ordinary
+// depth testing without ever drawing itself - tried that first, but it
+// didn't reliably occlude here (confirmed with a color-coded test: a blue
+// plane placed behind it showed through instead of being blocked, even
+// though depthWrite was on). Rather than depend on that, this is an ordinary
+// fully opaque plane - ordinary colorWrite:true rendering, so occlusion is
+// exactly as reliable as any other solid object in the scene - just colored
+// to match scene.background (black), so it reads as invisible without
+// needing any masking trick at all. side: BackSide (not DoubleSide) because
+// the camera only ever sees this face of the plane from the outside (x >
+// DOOR_WIDTH/2); the front face is left to the inner wall plane below so the
+// two don't z-fight where they're coplanar.
 const rightPlane = new THREE.Mesh(
 	new THREE.PlaneGeometry(DOOR_DEPTH, DOOR_HEIGHT),
-	new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.DoubleSide }),
+	new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.BackSide }),
 );
 rightPlane.rotation.y = -Math.PI / 2;
 rightPlane.position.set(DOOR_WIDTH / 2, -DOOR_HEIGHT / 2, DOOR_DEPTH / 2);
 door.add(rightPlane);
 
-// Bottom plane - normal toward +Y.
-const bottomPlane = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_WIDTH, DOOR_DEPTH), wallMaterial());
+// Inner wall - same geometry, rotation and position as the occluder above
+// (coplanar, not offset), just an ordinary opaque white wallMaterial() like
+// left/top/bottom, so the right side reads as a real wall (not a black gap)
+// once the camera is inside looking out (x < DOOR_WIDTH/2). Left at the
+// wallMaterial() default of FrontSide, which is exactly the complementary
+// face to the occluder's BackSide above - each is only ever front-facing to
+// the camera from its own side, so only one of the two ever draws for a
+// given view and they never fight over the same pixels.
+const rightPlaneInner = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_DEPTH, DOOR_HEIGHT), wallMaterial());
+rightPlaneInner.rotation.y = -Math.PI / 2;
+rightPlaneInner.position.set(DOOR_WIDTH / 2, -DOOR_HEIGHT / 2, DOOR_DEPTH / 2);
+door.add(rightPlaneInner);
+
+// Bottom plane - normal toward +Y. Full depth always (local Y, which maps
+// to world Z here, is never touched); the reveal is scale.x alone, pivoting
+// at the left edge - geometry translated so local x runs [0, DOOR_WIDTH]
+// instead of the default centered [-DOOR_WIDTH/2, DOOR_WIDTH/2], position
+// moved to x=-DOOR_WIDTH/2 to match, so scale.x=0 collapses the whole plane
+// flush to the left and scale.x=1 grows it rightward to its normal
+// [-DOOR_WIDTH/2, DOOR_WIDTH/2] span.
+const bottomPlaneGeometry = new THREE.PlaneGeometry(DOOR_WIDTH, DOOR_DEPTH);
+bottomPlaneGeometry.translate(DOOR_WIDTH / 2, 0, 0);
+const bottomPlane = new THREE.Mesh(bottomPlaneGeometry, wallMaterial());
 bottomPlane.rotation.x = -Math.PI / 2;
-bottomPlane.position.set(0, -DOOR_HEIGHT, DOOR_DEPTH / 2);
+bottomPlane.position.set(-DOOR_WIDTH / 2, -DOOR_HEIGHT, DOOR_DEPTH / 2);
+bottomPlane.scale.x = 0;
 door.add(bottomPlane);
 
 // Floor: same "pivot at the near edge, grow via scale.y" trick as the door,
@@ -144,12 +190,19 @@ floor.scale.y = 0;
 // Stairs: same "pivot at the near edge, grow via scale.y" trick as the floor,
 // chained one after another - each tread's own pivot sits exactly where the
 // previous one ends, so they only look continuous once every earlier tread
-// is fully grown. Positions are computed against the floor's actual (half-
-// open) length, not its full geometry, and each step drops in Y before
-// advancing in Z, so the empty gap between treads reads as the riser's shadow.
+// is fully grown. Each step drops in Y before advancing in Z, so the empty
+// gap between treads reads as the riser's shadow.
+//
+// The first tread starts a fixed clearance past the door's own far wall
+// (DOOR_DEPTH), not at a Z position baked in independently of it - at the
+// original DOOR_DEPTH=150 this lines up with the old hardcoded starting
+// value (160), so today's look is unchanged, but now the whole staircase
+// shifts down the +Z axis in lockstep whenever DOOR_DEPTH grows, instead of
+// the lengthened door frame just growing into/past the stairs.
+const STAIRS_CLEARANCE = 10; // matches the gap the original DOOR_DEPTH=150/first-tread-at-160 tuning left between the door's far wall and the first tread
 const stairs = [];
 let stairCursorY = -DOOR_HEIGHT;
-let stairCursorZ = FLOOR_ACTUAL_DEPTH;
+let stairCursorZ = DOOR_DEPTH + STAIRS_CLEARANCE;
 for (let i = 0; i < STAIR_COUNT; i++) {
 	const stairGeometry = new THREE.PlaneGeometry(STAIR_WIDTH, STAIR_RUN);
 	stairGeometry.translate(0, -STAIR_RUN / 2, 0);
@@ -228,7 +281,7 @@ function animate() {
 }
 animate();
 
-window.__debug = { scene, camera, controls, door, floor, stairs, secondFloor, stairs2, renderer };
+window.__debug = { scene, camera, controls, door, leftPlane, topPlane, bottomPlane, rightPlane, rightPlaneInner, floor, stairs, secondFloor, stairs2, renderer };
 
 const tl = gsap.timeline({
 	scrollTrigger: {
@@ -239,12 +292,26 @@ const tl = gsap.timeline({
 	},
 });
 
-tl.to(door.scale, {
-	z: 1,
+// Left/top/bottom each grow along their own axis (see their comments above
+// for which, and why); right is static and has no tween at all. All three
+// share the same start ('<' on the second and third ties them to the
+// first) and duration, so they read as one door opening, not three.
+tl.to(leftPlane.scale, {
+	y: 1,
 	ease: 'expo.inOut', // big ease - reads as barely moving, then a fast snap open, then settling
 	duration: DOOR_DURATION,
 });
-// No position arg - starts right where the door tween above ends.
+tl.to(topPlane.position, {
+	y: 0,
+	ease: 'expo.inOut',
+	duration: DOOR_DURATION,
+}, '<');
+tl.to(bottomPlane.scale, {
+	x: 1,
+	ease: 'expo.inOut',
+	duration: DOOR_DURATION,
+}, '<');
+// No position arg - starts right where the door tweens above end.
 tl.to(floor.scale, {
 	y: FLOOR_TARGET_SCALE,
 	ease: 'expo.inOut',

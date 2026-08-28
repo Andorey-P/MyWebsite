@@ -29,6 +29,14 @@
       </nav>
     </header>
 
+    <!-- Scroll progress indicator, see main.js's scrollProgressFill/the
+         landingSceneTimeline ScrollTrigger's onUpdate. Same z-index as
+         #loading-screen, placed before it in the DOM so the (opaque) loading
+         screen wins the stacking tie until it slides away. -->
+    <div class="scroll-progress" aria-hidden="true">
+      <div class="scroll-progress-fill"></div>
+    </div>
+
     <section id="loading-screen" class="background-white">
       <div class="loading-screen-bg">
         <div class="loading-screen-card">
@@ -105,6 +113,17 @@
 
         <!-- Closing wipe: growing circle-grid reveal, see main.js's CHAPTER_SIX_REVEAL section. -->
         <div class="chapter-six-reveal" aria-hidden="true"></div>
+
+        <!-- PLACEHOLDER copy - swap for real chapter seven title/subtitle.
+             Placed after .windows-scene/.chapter-six-reveal so it stacks above
+             both (same z-index, later in DOM order wins). -->
+        <div class="chapter-seven-description">
+          <div class="chapter-seven-description-left">
+            <h6 class="chapter-number">Chapter 07<span class="chapter-number-sub">— Threshold</span></h6>
+            <h1 class="split-reveal-seven">Threshold</h1>
+            <h3 class="split-reveal-seven">Placeholder copy - swap this out. What lies beyond the door is a different kind of space entirely.</h3>
+          </div>
+        </div>
 
         <div class="noise-overlay"></div>
 

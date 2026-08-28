@@ -5,7 +5,7 @@ import SplitType from 'split-type'
 
 import { LoadingManager } from "three";
 import LandingScene, { SWARM_RETREAT_DURATION } from "../scenes/landing-scene";
-import WindowsScene from '../scenes/windows-scene';
+import WindowsScene, { DOOR_STAIRS_DURATION } from '../scenes/windows-scene';
 import Lenis from 'lenis'
 import { PALETTE } from '../materials/palette.js';
 import { decodeFinalFrame, replaceImgWithCanvas } from './gifScrubber.js';
@@ -31,6 +31,9 @@ gsap.set('.split-reveal-five .char', { yPercent: 100 });
 // Chapter six's text, split separately for the same reason.
 const chapterSixTitle = new SplitType(".split-reveal-six");
 gsap.set('.split-reveal-six .char', { yPercent: 100 });
+// Chapter seven's text, split separately for the same reason.
+const chapterSevenTitle = new SplitType(".split-reveal-seven");
+gsap.set('.split-reveal-seven .char', { yPercent: 100 });
 
 // Re-splits the hero text and refreshes ScrollTrigger after a resize settles.
 let splitResizeTimeout;
@@ -244,6 +247,14 @@ const CHAPTER_SIX_REVEAL_DURATION = 2;
 // onload()).
 const WINDOWS_CAMERA_DURATION = 2;
 
+// Scroll progress bar fill (see .scroll-progress-fill in style.css) - scaled
+// directly off this same ScrollTrigger's own progress below, so it's tied to
+// the exact same scroll-distance `end` calc every chapter above is scrubbed
+// against, rather than a separately-tracked distance. Whatever gets added to
+// that `end` calc later (more chapters/sections) automatically stretches or
+// shrinks the bar's own 0-1 range along with it - nothing here needs updating.
+const scrollProgressFill = document.querySelector('.scroll-progress-fill');
+
 // Timeline for events in the landing section
 const landingSceneTimeline = gsap.timeline({
 	scrollTrigger: {
@@ -255,21 +266,40 @@ const landingSceneTimeline = gsap.timeline({
 		// Chapter six's reveal terms (+ CHAPTER_SIX_REVEAL_STOPPAGE + CHAPTER_SIX_REVEAL_DURATION)
 		// are left out while that section is commented out below - add them back in
 		// alongside it.
-		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION + sphereMoveDuration + CHAPTER_FIVE_STOPPAGE + CHAPTER_FIVE_DURATION + DOMINO_FALL_STOPPAGE + DOMINO_FALL_DURATION + CHAPTER_FIVE_TAIL + DOMINO_CLEAR_DURATION + SHAPES_SWARM_STOPPAGE + SHAPES_SWARM_TAIL + CHAPTER_SIX_REVEAL_STOPPAGE + CHAPTER_SIX_REVEAL_DURATION + WINDOWS_CAMERA_DURATION)),
+		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION + sphereMoveDuration + CHAPTER_FIVE_STOPPAGE + CHAPTER_FIVE_DURATION + DOMINO_FALL_STOPPAGE + DOMINO_FALL_DURATION + CHAPTER_FIVE_TAIL + DOMINO_CLEAR_DURATION + SHAPES_SWARM_STOPPAGE + SHAPES_SWARM_TAIL + CHAPTER_SIX_REVEAL_STOPPAGE + CHAPTER_SIX_REVEAL_DURATION + WINDOWS_CAMERA_DURATION + DOOR_STAIRS_DURATION)),
 		invalidateOnRefresh: true,
 		scrub: 1, // lower scrub means the camera reacts more directly to scrolling
-		markers: false
+		markers: false,
+		// self.progress is the trigger's raw immediate scroll-through-range value
+		// (0-1) - unlike the timeline's own playhead above, it isn't smoothed by
+		// `scrub`, so the bar tracks the actual scroll position 1:1 rather than
+		// lagging half a beat behind it.
+		onUpdate: (self) => {
+			scrollProgressFill.style.transform = `scaleX(${self.progress})`;
+		},
 	}
 })
 window.__debug = { ScrollTrigger, landingScene, landingSceneTimeline, activeScene: () => activeScene, gsap };
 
-// Resizes the renderer's drawing buffer to match the canvas's CSS display size.
+// Resizes the renderer's drawing buffer to match the canvas's CSS display
+// size. Device-pixel scaling is already handled by renderer.setPixelRatio()
+// (set once, at renderer creation above) - both renderer.setSize() and
+// composer.setSize() multiply by that internally, so the width/height
+// passed in here need to be plain CSS pixels (canvas.clientWidth/Height),
+// not pre-multiplied by pixelRatio. This used to multiply by pixelRatio a
+// second time here, which applied the device-pixel scale twice - hugely
+// over-allocating the actual drawing buffer (canvas.width/height), and
+// throwing off anything that reads the canvas's own CSS size to position
+// itself in device-pixel space, notably ViewHelper's corner gizmo (it uses
+// domElement.offsetWidth directly - see LandingScene's addWorldAxesGizmo).
+// It also meant canvas.width could never converge with the target size, so
+// this was resizing (reallocating the whole drawing buffer) every frame.
 function resizeRendererToDisplaySize() {
 	const canvas = renderer.domElement;
-	const pixelRatio = Math.min(window.devicePixelRatio, 2);
-	const width = Math.floor(canvas.clientWidth * pixelRatio);
-	const height = Math.floor(canvas.clientHeight * pixelRatio);
-	const needsResize = canvas.width !== width || canvas.height !== height;
+	const width = canvas.clientWidth;
+	const height = canvas.clientHeight;
+	const pixelRatio = renderer.getPixelRatio();
+	const needsResize = canvas.width !== Math.floor(width * pixelRatio) || canvas.height !== Math.floor(height * pixelRatio);
 	if (needsResize) {
 		renderer.setSize(width, height, false);
 		if (activeScene.composer) {
@@ -414,6 +444,15 @@ function onload(){
 			if (shouldRevealGrid !== hiddenGridRevealed) {
 				hiddenGridRevealed = shouldRevealGrid;
 				landingScene.hiddenGrid.visible = shouldRevealGrid;
+				// Starts at half its resting scale on reveal - on some aspect ratios
+				// the grid's edge tiles still peek past wall three despite the
+				// starting-position nudge in landing-scene.js (gridExtraRightShift),
+				// and at half size that peek reads as far less noticeable through
+				// chapter three. Grown back to full scale alongside the position
+				// ease-in below, once chapter four's own timeline starts.
+				if (shouldRevealGrid) {
+					landingScene.hiddenGrid.scale.setScalar(landingScene.gridToCubeScale * 0.5);
+				}
 			}
 		},
 	}, PHASE3_START + 1);
@@ -599,6 +638,17 @@ function onload(){
 		x: landingScene.hiddenGridRestPosition.x,
 		y: landingScene.hiddenGridRestPosition.y,
 		z: landingScene.hiddenGridRestPosition.z,
+		ease: 'power3.inOut',
+		duration: PHASE4_DURATION,
+	}, PHASE4_START);
+
+	// ...and grows from the half scale it was revealed at (see the floorMorph
+	// tween's onUpdate above) back up to its true resting scale, alongside that
+	// same position ease-in.
+	landingSceneTimeline.to(landingScene.hiddenGrid.scale, {
+		x: landingScene.gridToCubeScale,
+		y: landingScene.gridToCubeScale,
+		z: landingScene.gridToCubeScale,
 		ease: 'power3.inOut',
 		duration: PHASE4_DURATION,
 	}, PHASE4_START);
@@ -1518,16 +1568,62 @@ function onload(){
 	// 3D wall. Scrolling back up past this point swaps back to the landing
 	// scene, and continuing further up shrinks the dots away as normal.
 	const WINDOWS_SWAP_START = CHAPTER_SIX_REVEAL_START + CHAPTER_SIX_REVEAL_DURATION;
+
+	// The bottom meta bar (studio signature + "Scroll to continue") is static -
+	// never faded or hidden - so it's still sitting there once the dot wipe
+	// below turns the backdrop black, where its ink color/track line read as
+	// nearly invisible. Scroll-scrubbed over the same span the wipe itself
+	// covers the screen, so both flip to the palette's cream tone right as the
+	// backdrop does (and back on scroll-back), same idiom as the
+	// chapter-six-description fade below. The falling accent drop
+	// (.landing-scene-scroll-line::after) is left on its brick color - a
+	// pseudo-element, not tweenable directly, and just a decorative dot rather
+	// than text needing AA contrast.
+	landingSceneTimeline.to('.landing-scene-meta', {
+		color: '#f8e0ad',
+		ease: 'power1.inOut',
+		duration: WINDOWS_SWAP_START - CHAPTER_SIX_REVEAL_START,
+	}, CHAPTER_SIX_REVEAL_START);
+	landingSceneTimeline.to('.landing-scene-scroll-line', {
+		backgroundColor: 'rgba(248, 224, 173, 0.3)',
+		ease: 'power1.inOut',
+		duration: WINDOWS_SWAP_START - CHAPTER_SIX_REVEAL_START,
+	}, CHAPTER_SIX_REVEAL_START);
+
+	// Chapter six's own text has nothing left to fade it out on its own (the dot
+	// wipe was always the true finale before chapter seven existed) - scroll-
+	// scrubbed straight against the timeline, same as the dot wipe itself,
+	// rather than a fixed real-time tween, so it tracks scroll speed exactly:
+	// starts fading the moment the swarm retreat kicks off (SHAPES_SWARM_EXIT_START)
+	// and is fully gone right as the dot wipe finishes covering the screen.
+	landingSceneTimeline.to('.chapter-six-description', {
+		autoAlpha: 0,
+		ease: 'power1.inOut',
+		duration: WINDOWS_SWAP_START - SHAPES_SWARM_EXIT_START,
+	}, SHAPES_SWARM_EXIT_START);
+
+	// Chapter seven's text, same slide-in-and-fade reveal as every other
+	// chapter, played once the dot wipe has fully covered the screen and the
+	// windows scene has swapped in underneath it.
+	const chapterSevenTimeline = gsap.timeline({ paused: true })
+		.to('.chapter-seven-description', { autoAlpha: 1, ease: 'power1.inOut', duration: 1 }, 0)
+		.to('.split-reveal-seven .char', { yPercent: 0, ease: 'power1.inOut', duration: 1, stagger: .001 }, 0);
+
+	const CHAPTER_SEVEN_HIDE_DURATION = .2;
+
 	landingSceneTimeline.call(() => {
 		if (landingSceneTimeline.scrollTrigger.direction === 1) {
 			setActiveScene(windowsScene);
-			// Chapter six's own text has nothing left to fade it out (the dot wipe
-			// was always the true finale before this) - hide it now, while the dots
-			// still fully cover the screen, so it doesn't linger over the reveal.
-			gsap.set('.chapter-six-description', { autoAlpha: 0 });
+			chapterSevenTimeline.play();
 		} else {
+			chapterSevenTimeline.pause();
+			gsap.to('.chapter-seven-description', {
+				autoAlpha: 0,
+				ease: 'power1.in',
+				duration: CHAPTER_SEVEN_HIDE_DURATION,
+				onComplete: () => chapterSevenTimeline.pause(0),
+			});
 			setActiveScene(landingScene);
-			gsap.set('.chapter-six-description', { autoAlpha: 1 });
 		}
 	}, null, WINDOWS_SWAP_START);
 
@@ -1543,9 +1639,16 @@ function onload(){
 		position: windowsScene.scrollCameraBase.position.clone(),
 		lookAt: windowsScene.scrollCameraBase.lookAt.clone(),
 	};
+	// TODO: (1.5,-0.5,6)/(0.5,0,-5) were tuned for whatever this scene was
+	// going to hold before the door/stairs prototype was ported in - at that
+	// scale they'd land the camera inside the door geometry. Frozen to a
+	// no-op (from === to) for now, matching the prototype's own camera,
+	// which never moves on scroll either - only the door/stairs meshes
+	// animate there. Retune to an actual dolly-in point once the door/stairs
+	// framing itself is confirmed to look right.
 	const windowsCameraTo = {
-		position: new THREE.Vector3(1.5, -0.5, 6),
-		lookAt: new THREE.Vector3(0.5, 0, -5),
+		position: windowsCameraFrom.position.clone(),
+		lookAt: windowsCameraFrom.lookAt.clone(),
 	};
 	const windowsCamera = { t: 0 };
 	landingSceneTimeline.fromTo(windowsCamera, {
@@ -1559,6 +1662,15 @@ function onload(){
 			windowsScene.scrollCameraBase.lookAt.lerpVectors(windowsCameraFrom.lookAt, windowsCameraTo.lookAt, windowsCamera.t);
 		},
 	}, WINDOWS_CAMERA_START);
+
+	// Door opens and both stair flights cascade, scrubbed continuously
+	// against scroll (reversible on scroll-back) exactly like the
+	// standalone prototype - nested directly rather than call()-triggered
+	// like chapterTwoTimeline etc., since those play once at a fixed real-
+	// time pace and this needs to stay tied to scroll position instead. See
+	// DOOR_STAIRS_DURATION in windows-scene.js, folded into this timeline's
+	// own `end` calc above so there's actual scroll room for it to play out.
+	landingSceneTimeline.add(windowsScene.doorStairsTimeline, WINDOWS_CAMERA_START);
 
 };
 

@@ -323,6 +323,18 @@ body {
   position: absolute;
   inset: 0;
   z-index: 2;
+  /* This div sits in the DOM (and at this stacking layer's full-viewport
+     inset:0) from page load - only the shared <canvas> moves into it later,
+     via setActiveScene() in main.js. Nothing inside ever needs to be a
+     direct pointer target (windows-scene.js has no pointer/raycast code;
+     the site's mouse-driven camera look listens on `document`, not a
+     specific element), so without this it silently sits on top of every
+     earlier chapter's own z-index:2 overlay - including
+     .chapter-lattice-resolution's buttons, which are the first interactive
+     thing any of those overlays have ever contained - and swallows pointer
+     events meant for them the whole time, not just once this scene is
+     actually active. */
+  pointer-events: none;
 }
 
 /* Renderer canvas: sized by CSS against its container, never by JS-set
@@ -461,7 +473,7 @@ body {
 @media (max-width: 767px), (max-height: 500px) {
   .landing-scene-description {
     padding-left: 0;
-    padding-top: calc(7rem + 6vh);
+    padding-top: 6rem;
     justify-content: center;
   }
 
@@ -562,7 +574,7 @@ body {
 @media (max-width: 767px), (max-height: 500px) {
   .chapter-two-description {
     padding-left: 0;
-    padding-top: calc(7rem + 6vh);
+    padding-top: 6rem;
     display: flex;
     justify-content: center;
   }
@@ -624,7 +636,7 @@ body {
 @media (max-width: 767px), (max-height: 500px) {
   .chapter-three-description {
     padding-left: 0;
-    padding-top: calc(7rem + 6vh);
+    padding-top: 6rem;
     display: flex;
     justify-content: center;
   }
@@ -686,7 +698,7 @@ body {
 @media (max-width: 767px), (max-height: 500px) {
   .chapter-four-description {
     padding-left: 0;
-    padding-top: calc(7rem + 6vh);
+    padding-top: 6rem;
     display: flex;
     justify-content: center;
   }
@@ -749,7 +761,7 @@ body {
 @media (max-width: 767px), (max-height: 500px) {
   .chapter-five-description {
     padding-left: 0;
-    padding-top: calc(7rem + 6vh);
+    padding-top: 6rem;
     display: flex;
     justify-content: center;
   }
@@ -811,7 +823,7 @@ body {
 @media (max-width: 767px), (max-height: 500px) {
   .chapter-six-description {
     padding-left: 0;
-    padding-top: calc(7rem + 6vh);
+    padding-top: 6rem;
     display: flex;
     justify-content: center;
   }
@@ -828,6 +840,311 @@ body {
   .chapter-six-description {
     font-size: clamp(0.85rem, 0.55rem + 2.6vh, 1.05rem);
   }
+}
+
+/* Lattice reveal chapter overlay: same treatment as the chapters above,
+   revealed in main.js alongside the lattice grid's own entrance - see the
+   landingSceneTimeline .call() targeting LATTICE_START. Currently occupies
+   chapter six's numbered slot (see index.html) while that chapter is
+   shelved. */
+.chapter-lattice-description {
+  box-sizing: border-box;
+  width: 100vw;
+  /* Unlike the chapter-four/five/six overlays this is based on, this one has
+     a second child (.chapter-lattice-resolution) anchored to the viewport's
+     own bottom/right edges - needs an explicit height so that positioning is
+     relative to the viewport instead of this box's own auto height (which
+     would otherwise only be as tall as the text column beside it). */
+  height: 100vh;
+  padding-left: 5vw;
+  padding-top: 7rem;
+  z-index: 2;
+  font-size: clamp(1rem, 0.82rem + 0.9vw, 1.5rem);
+  font-family: 'Ivar Display';
+  color: #2a2018;
+  position: absolute;
+  opacity: 0;
+  /* Unlike the chapter-four/five/six overlays this is based on (plain inert
+     text, so this never mattered for them), this one has real interactive
+     descendants (.chapter-lattice-hover-zone, .chapter-lattice-resolution's
+     buttons) - opacity:0 alone hides them visually but NOT from hit-testing
+     (only visibility does that), and GSAP's autoAlpha doesn't touch
+     visibility until the first time its own tween actually renders. Without
+     this, the hover zone and buttons are live and clickable/hoverable the
+     entire time before a visitor first scrolls to this chapter (and after
+     scrolling past it) - just not visibly so. Setting visibility:hidden
+     here up front, before GSAP ever runs, closes that gap; autoAlpha
+     flips it back to visible the instant it animates toward nonzero opacity
+     (that's exactly the problem autoAlpha exists to solve), so the existing
+     .to(..., {autoAlpha:1}) / {autoAlpha:0} calls in main.js need no
+     changes. */
+  visibility: hidden;
+}
+
+.chapter-lattice-description-left {
+  width: 40%;
+  min-width: 320px;
+  max-width: 760px;
+  text-align: left;
+}
+
+.chapter-lattice-description-left h1.split-reveal-lattice {
+  font-size: clamp(2.8rem, 1.2rem + 5.8vw, 6.4rem);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: #bd4a30;
+  margin: 0 0 0.5em;
+}
+
+.chapter-lattice-description-left h3.split-reveal-lattice {
+  font-size: clamp(1rem, 0.9rem + 0.4vw, 1.2rem);
+  font-weight: 400;
+  line-height: 1.6;
+  max-width: 34ch;
+  opacity: 0.82;
+}
+
+@media (max-width: 767px), (max-height: 500px) {
+  .chapter-lattice-description {
+    padding-left: 0;
+    padding-top: 6rem;
+    display: flex;
+    justify-content: center;
+  }
+
+  .chapter-lattice-description-left {
+    width: 88vw;
+    min-width: 0;
+    max-width: 480px;
+    text-align: left;
+  }
+}
+
+@media (max-height: 500px) {
+  .chapter-lattice-description {
+    font-size: clamp(0.85rem, 0.55rem + 2.6vh, 1.05rem);
+  }
+}
+
+/* Invisible hover region approximating the lattice grid's own screen
+   footprint, for the "Lenna" cursor-follow tooltip (see main.js and
+   .lattice-hover-tooltip below) - not a real 3D raycast against the mesh,
+   same approximation .chapter-lattice-resolution below already makes. The
+   grid is a billboard (its group's quaternion is copied from the camera's
+   own in buildLatticeReveal, so it always faces the camera dead-on) sized to
+   LATTICE_SCALE_FRACTION * viewport height and centered at
+   (LATTICE_SCREEN_X, LATTICE_SCREEN_Y) - both in landing-scene.js - so a
+   plain vh-sized square reproduces its footprint without projecting
+   anything. Padded slightly past that exact square to cover the swirl
+   turbulence's own overspill before it settles. First child of this
+   chapter's overlay so the text column and resolution buttons - both real
+   content - still stack above it. */
+.chapter-lattice-hover-zone {
+  position: absolute;
+  left: 62vw;
+  top: 48vh;
+  transform: translate(-50%, -50%);
+  width: 84vh;
+  height: 84vh;
+}
+
+/* "Lenna" cursor-follow tooltip - the classic test image the lattice grid
+   resolves into on scroll. Position is driven entirely by main.js
+   (translate3d against this fixed top:0/left:0 origin) with a soft-trailing
+   lerp rather than a 1:1 cursor snap, matching the eased feel everywhere
+   else on this site. `scale` is a standalone property (not part of
+   `transform`) deliberately, so its pop-in can transition on its own via
+   .is-visible without fighting the per-frame transform main.js sets for
+   position. */
+.lattice-hover-tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  background: #bd4a30;
+  color: #fff;
+  font-family: 'Neue Haas Grotesk';
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  scale: 0.85;
+  transition: opacity 0.2s ease, scale 0.2s ease;
+  will-change: transform, opacity, scale;
+}
+
+.lattice-hover-tooltip.is-visible {
+  opacity: 1;
+  scale: 1;
+}
+
+/* Resolution control: lets a visitor step the lattice grid through higher
+   sampling densities than the chapter's default 24x24 reveal - see
+   setLatticeResolution in landing-scene.js. Nested inside
+   .chapter-lattice-description rather than given its own show/hide tween in
+   main.js, so it rides that parent's autoAlpha in and out for free at every
+   point that already fades the chapter's text (entrance, reverse-scroll
+   exit, and the closing wipe). Vertically centered along the grid's own
+   right edge (LATTICE_SCREEN_X/Y in landing-scene.js), not glued to its
+   exact projected bounds - same approximation the text column already makes
+   rather than computing true screen-space projection for a DOM overlay. */
+.chapter-lattice-resolution {
+  position: absolute;
+  right: 6vw;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* Stands in for a "grid resolution" caption - x as in NxN, not a label to
+   read, so it's decorative (aria-hidden; the group below carries the
+   accessible name). */
+.chapter-lattice-resolution-label {
+  font-family: 'Neue Haas Grotesk';
+  font-size: 0.85rem;
+  font-weight: 500;
+  opacity: 0.45;
+}
+
+.chapter-lattice-resolution-grid {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* Same "spot color on the active/hovered one only" language as
+   .site-header-link - unstyled <button>s reading as tracked numerals, not
+   boxed UI chrome (nothing else on the page is a box), lit with the site's
+   one accent (#bd4a30) instead of a new hue. */
+.chapter-lattice-resolution-btn {
+  position: relative;
+  background: none;
+  border: none;
+  padding: 0 0 0.2rem;
+  margin: 0;
+  font-family: 'Neue Haas Grotesk';
+  font-size: 0.95rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: #2a2018;
+  opacity: 0.55;
+  cursor: pointer;
+  transition: color 0.3s ease, opacity 0.3s ease;
+}
+
+.chapter-lattice-resolution-btn::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: right;
+  transition: transform 0.3s ease;
+}
+
+.chapter-lattice-resolution-btn:hover,
+.chapter-lattice-resolution-btn:focus-visible {
+  color: #bd4a30;
+  opacity: 1;
+}
+
+.chapter-lattice-resolution-btn:hover::after,
+.chapter-lattice-resolution-btn:focus-visible::after {
+  transform: scaleX(1);
+  transform-origin: left;
+}
+
+.chapter-lattice-resolution-btn:focus-visible {
+  outline: 1px solid #bd4a30;
+  outline-offset: 4px;
+}
+
+/* The committed resolution (click on touch, or whichever was last hovered
+   on desktop) stays lit the same way the nav's current-page link does. */
+.chapter-lattice-resolution-btn[aria-pressed="true"] {
+  color: #bd4a30;
+  opacity: 1;
+}
+
+.chapter-lattice-resolution-btn[aria-pressed="true"]::after {
+  transform: scaleX(1);
+}
+
+@media (max-width: 767px), (max-height: 500px) {
+  /* Desktop anchors this to the grid's right edge, vertically centered -
+     doesn't track portrait's centered/lower grid placement (LATTICE_SCREEN_X/Y
+     _PORTRAIT in landing-scene.js), so mobile instead sits it horizontally
+     below the grid, centered under it. */
+  .chapter-lattice-resolution {
+    right: auto;
+    left: 50%;
+    top: auto;
+    bottom: 10vh;
+    transform: translateX(-50%);
+    flex-direction: row;
+    gap: 1.1rem;
+  }
+
+  .chapter-lattice-resolution-grid {
+    flex-direction: row;
+    gap: 1.1rem;
+  }
+
+  .chapter-lattice-resolution-btn {
+    font-size: 0.85rem;
+  }
+}
+
+/* One-time prompt to grant iOS's gated motion-sensor permission (see
+   initGyroPermissionButton in gyro-controls.js) - shown via JS only on
+   platforms that need it (iOS 13+ Safari), so this stays hidden everywhere
+   else regardless of viewport width. Styled as an actual pill (unlike the
+   lattice-resolution links above) since mobile has no hover state to hint
+   "this is tappable" - needs to read as a button on sight. Fixed so it's
+   reachable no matter which chapter the visitor has scrolled to by the time
+   they tap it. */
+.gyro-permission-btn {
+  position: fixed;
+  left: 50%;
+  bottom: 6vh;
+  transform: translateX(-50%);
+  z-index: 20;
+  background: #fdf6ea;
+  border: 1px solid #2a2018;
+  border-radius: 999px;
+  padding: 0.7rem 1.4rem;
+  margin: 0;
+  font-family: 'Neue Haas Grotesk';
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: #2a2018;
+  cursor: pointer;
+  transition: color 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+}
+
+.gyro-permission-btn:hover,
+.gyro-permission-btn:focus-visible {
+  color: #fdf6ea;
+  background: #bd4a30;
+  border-color: #bd4a30;
+}
+
+.gyro-permission-btn[hidden] {
+  display: none;
 }
 
 /* Closing wipe: a grid of dark circles (see main.js's CHAPTER_SIX_REVEAL
@@ -904,7 +1221,7 @@ body {
 @media (max-width: 767px), (max-height: 500px) {
   .chapter-seven-description {
     padding-left: 0;
-    padding-top: calc(7rem + 6vh);
+    padding-top: 6rem;
     display: flex;
     justify-content: center;
   }

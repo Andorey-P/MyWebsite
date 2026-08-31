@@ -4,8 +4,10 @@ import { RGBELoader } from 'three/examples/jsm/Addons.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 import BaseThreeJS from '../core/threejs-scene-module';
-import { createGridMaterial } from "../materials/materials.js";
+import { createGridMaterial, createLatticeRevealMaterial } from "../materials/materials.js";
 import { PALETTE } from "../materials/palette.js";
+import { LATTICE_SRC, LATTICE_LUMINANCE } from './lattice-portrait-data.js';
+import { isMobileViewport, GYRO_DEBUG, gyroDebugLog } from '../core/gyro-controls.js';
 
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -73,6 +75,54 @@ const SWARM_SCREEN_Y = 0.5;
 // settled radius should occupy on screen.
 const SWARM_SCREEN_RADIUS_FRACTION = 0.4;
 
+// Lattice reveal chapter (see buildLatticeReveal/enterLatticeReveal/
+// exitLatticeReveal/setLatticeProgress): a grid of thin rotating marks, one
+// per cell, that unwinds a turbulence flow and brightens/thins toward a
+// hidden portrait's own per-cell luminance as the chapter's own scroll
+// progress goes 0->1 (see main.js's LATTICE_START). Ported from
+// prototype/three-lattice-reveal.html - see that file for the original
+// standalone demo (own renderer/camera/UI controls, none of which carry
+// over: here the marks are one InstancedMesh living in this scene, driven
+// by the shared timeline instead of the page's own raw scroll fraction).
+// Default (index 0) plus the higher densities the resolution buttons in
+// main.js let a visitor step up to - see setLatticeResolution. Scrolling
+// through without touching them only ever sees the default.
+const LATTICE_N_STEPS = [24, 48, 72, 96];
+// Whether the grid starts swirled/turbulent (true - the "let the turbulence
+// unwind" look, marks curling and drifting before settling) or starts with
+// every mark already straight/at rest, no curl (false) - see the `curled`
+// param on createLatticeRevealMaterial, which this feeds uFlow.
+const LATTICE_CURLED_INTRO = false;
+// Screen placement, same convention as the shapes swarm's SWARM_SCREEN_*
+// below: fraction of viewport width/height (0..1, top-left origin) the
+// grid's own local origin (its center) should project to.
+const LATTICE_SCREEN_X = 0.62;
+const LATTICE_SCREEN_Y = 0.48;
+// Desktop offsets the grid right of center since the wide aspect leaves room
+// to spare; on portrait the grid's own width now nearly fills the frame (see
+// LATTICE_SCALE_FRACTION_PORTRAIT), so that same offset just shoves it past
+// the right edge instead of reading as "placed to the right" - center it.
+const LATTICE_SCREEN_X_PORTRAIT = 0.5;
+// Portrait stacks the chapter's text above the grid rather than beside it, so the
+// grid sits further down the frame (Y is top-left origin - larger means lower) to
+// clear the text instead of overlapping it.
+const LATTICE_SCREEN_Y_PORTRAIT = 0.6;
+// The grid spans local [-1,1] on both axes (a 2-unit square) - this scales
+// that unit square so its own height covers roughly this fraction of the
+// visible frame's height at the placement depth (worldScale = halfHeight *
+// this, and world height = 2 * worldScale).
+const LATTICE_SCALE_FRACTION = .8;
+// On a portrait screen halfWidth < halfHeight, so a square scaled off height
+// alone overflows past the left/right edges - see buildLatticeReveal, which
+// scales off whichever half-extent is smaller instead. Slightly larger since
+// width, not height, ends up the limiting dimension there, leaving the same
+// kind of breathing room desktop gets from its own height-based fraction.
+const LATTICE_SCALE_FRACTION_PORTRAIT = .85;
+// Real-time (not scroll-scrubbed) length of the per-mark pop-in wavefront
+// that plays once, from the diagonal aData.w delay, the first time this
+// chapter is scrolled into.
+const LATTICE_INTRO_DURATION = 1;
+
 const SWARM_COLORS = [
 	// PALETTE.brick,
   // PALETTE.slate,
@@ -91,6 +141,10 @@ export default class LandingScene extends BaseThreeJS{
     this.clearAlpha = 0;
     this.mouseX = 0;
     this.mouseY = 0;
+    // Set on the first 'deviceorientation' reading and never touched again -
+    // see onDeviceOrientation()'s use of it as the "phone held naturally"
+    // pose to measure tilt against.
+    this.gyroBaseline = null;
     this.camera.fov = this.getResponsiveFov(this.camera.aspect);
     // Drives the mobile-only Phase 6 layout swap (see createSplitWall/main.js):
     // on a portrait screen the wall-break sequence runs top-to-bottom instead
@@ -114,8 +168,18 @@ export default class LandingScene extends BaseThreeJS{
     // simulating normally) | 'retreating' (lerping back out to spawn positions).
     this.shapesSwarmBuilt = false;
     this.shapesSwarmState = 'hidden';
+    // Lattice reveal chapter (see buildLatticeReveal/enterLatticeReveal/
+    // exitLatticeReveal): built lazily on first entrance, same reasoning as
+    // the swarm above.
+    this.latticeBuilt = false;
     this.onDocumentMouseMove = this.onDocumentMouseMove.bind(this);
     document.addEventListener( 'mousemove', this.onDocumentMouseMove );
+    // Mobile substitute for the mousemove drift above - see
+    // onDeviceOrientation(). Registered eagerly regardless of platform/
+    // permission state: iOS just won't deliver anything until the
+    // gesture-gated permission prompt (see gyro-controls.js) resolves.
+    this.onDeviceOrientation = this.onDeviceOrientation.bind(this);
+    window.addEventListener( 'deviceorientation', this.onDeviceOrientation );
 
     this.init();
   }
@@ -287,13 +351,13 @@ export default class LandingScene extends BaseThreeJS{
     box.castShadow = true;
     this.box1 = box;
 
-    const box2 = new THREE.Mesh(boxGeom, makeBoxMaterials(PALETTE.ochre));
+    const box2 = new THREE.Mesh(boxGeom, makeBoxMaterials(PALETTE.brick));
     box2.position.set(0, 50, 400);
     this.scene.add( box2 );
     box2.castShadow = true;
     this.box2 = box2;
 
-    const box3 = new THREE.Mesh(boxGeom, makeBoxMaterials(PALETTE.slate));
+    const box3 = new THREE.Mesh(boxGeom, makeBoxMaterials(PALETTE.brick));
     box3.position.set(-300, 50, 400);
     this.scene.add( box3 );
     box3.castShadow = true;
@@ -307,11 +371,11 @@ export default class LandingScene extends BaseThreeJS{
     // Same fix as box1-3: split cap from sides so the cap's Z-axis tile count
     // can be tuned down independently instead of inheriting the sides' value.
     const box4SideMaterial = boxMaterial.clone();
-    box4SideMaterial.uniforms.uBaseColor.value.set(PALETTE.sage);
+    box4SideMaterial.uniforms.uBaseColor.value.set(PALETTE.paper);
     box4SideMaterial.uniforms.uTile.value.set(8, 4);
 
     const box4CapMaterial = boxMaterial.clone();
-    box4CapMaterial.uniforms.uBaseColor.value.set(PALETTE.sage);
+    box4CapMaterial.uniforms.uBaseColor.value.set(PALETTE.paper);
     box4CapMaterial.uniforms.uTile.value.set(8, 1);
 
     const box4 = new THREE.Mesh(boxGeom, [
@@ -616,6 +680,17 @@ export default class LandingScene extends BaseThreeJS{
     // idle look this early-return below gates.
     this.updateShapesSwarm(Math.min(this.clock.getDelta(), 1 / 30));
 
+    // Same reasoning - the lattice's turbulence keeps drifting and its intro
+    // pop-in plays in real time regardless of the idle look. Uses its own
+    // performance.now()-based clock (set in buildLatticeReveal/
+    // enterLatticeReveal) rather than this.clock, since that Clock's own
+    // getDelta() is already being consumed above this frame.
+    if (this.latticeGroup && this.latticeGroup.visible) {
+      const now = performance.now();
+      this.latticeMaterial.uniforms.uTime.value = (now - this.latticeStartTime) / 1000;
+      this.latticeMaterial.uniforms.uIntro.value = Math.min(1, (now - this.latticeIntroStart) / (LATTICE_INTRO_DURATION * 1000));
+    }
+
     if (this.lockIdleLook) return;
 
     // Calculate a scale factor for movement and lerping based on the camera's z position
@@ -665,6 +740,41 @@ export default class LandingScene extends BaseThreeJS{
     this.mouseX = ( event.clientX - this.windowHalfX );
     this.mouseY = ( event.clientY - this.windowHalfY );
 
+  }
+
+  // Tilt-driven substitute for onDocumentMouseMove on mobile, feeding the
+  // same this.mouseX/this.mouseY that update()'s idle look already reads -
+  // gated to isMobileViewport so a desktop/tablet with orientation sensors
+  // can't hijack the mouse-driven look. Baselined against the first reading
+  // rather than raw angles, since "phone held naturally" is rarely flat -
+  // only the tilt *away* from that starting pose should move the camera.
+  // gamma (left-right tilt) drives X, beta (forward-back tilt) drives Y,
+  // mirroring the "tilt the phone" gesture the mouse's left/right + up/down
+  // movement stood in for on desktop.
+  onDeviceOrientation( event ) {
+    if ( GYRO_DEBUG ) {
+      gyroDebugLog( `ch1 raw: a=${event.alpha} b=${event.beta} g=${event.gamma}\nmobile=${isMobileViewport.matches} innerW=${window.innerWidth}` );
+    }
+    if ( !isMobileViewport.matches ) return;
+    if ( event.gamma === null || event.beta === null ) return;
+    if ( !this.gyroBaseline ) {
+      this.gyroBaseline = { beta: event.beta, gamma: event.gamma };
+    }
+    const GYRO_SENSITIVITY = 20; // pixel-equivalents per degree of tilt off baseline - tune to taste
+    // NOT windowHalfX/Y - those are how far a real mouse can physically get
+    // from screen center, which on a phone is only ~150-220px, so reusing
+    // them here capped the tilt-driven swing far below the desktop mouse
+    // sweep no matter how high GYRO_SENSITIVITY went. These instead target
+    // roughly the swing a full desktop mouse sweep produces.
+    const GYRO_MAX_X = 900;
+    const GYRO_MAX_Y = 500;
+    const deltaGamma = event.gamma - this.gyroBaseline.gamma;
+    const deltaBeta = event.beta - this.gyroBaseline.beta;
+    this.mouseX = THREE.MathUtils.clamp( deltaGamma * GYRO_SENSITIVITY, -GYRO_MAX_X, GYRO_MAX_X );
+    this.mouseY = THREE.MathUtils.clamp( -deltaBeta * GYRO_SENSITIVITY, -GYRO_MAX_Y, GYRO_MAX_Y );
+    if ( GYRO_DEBUG ) {
+      gyroDebugLog( `ch1: dG=${deltaGamma.toFixed(1)} dB=${deltaBeta.toFixed(1)}\nmouseX=${this.mouseX.toFixed(0)} mouseY=${this.mouseY.toFixed(0)}` );
+    }
   }
 
   // Builds one "wall" as a group holding two half-height meshes stacked flush
@@ -1176,6 +1286,160 @@ export default class LandingScene extends BaseThreeJS{
     for (const mesh of Object.values(this.shapesSwarmMeshes)) {
       mesh.instanceMatrix.needsUpdate = true;
     }
+  }
+
+  // Builds one resolution's InstancedBufferGeometry: the per-cell downsample
+  // of LATTICE_LUMINANCE plus the swirl/entrance-timing data every mark reads
+  // in the shader (see createLatticeRevealMaterial). Pulled out of
+  // buildLatticeReveal so setLatticeResolution can call it again lazily for
+  // any of the higher densities in LATTICE_N_STEPS, cached per n afterward.
+  buildLatticeGeometry(n) {
+    const count = n * n;
+    const cells = new Float32Array(count * 2);
+    const data = new Float32Array(count * 4);
+    const raw = new Float32Array(count);
+
+    // Downsamples the 128x128 source into this grid's own resolution by
+    // averaging each cell's own block of source pixels.
+    const step = LATTICE_SRC / n, c = (n - 1) / 2, maxR = Math.hypot(c, c);
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const x0 = Math.floor(i * step), x1 = Math.max(x0 + 1, Math.floor((i + 1) * step));
+        const y0 = Math.floor(j * step), y1 = Math.max(y0 + 1, Math.floor((j + 1) * step));
+        let s = 0, k = 0;
+        for (let y = y0; y < y1; y++)
+          for (let x = x0; x < x1; x++) { s += LATTICE_LUMINANCE[y * LATTICE_SRC + x]; k++; }
+        raw[j * n + i] = s / k / 255;
+      }
+    }
+
+    // Averaging washes out contrast by a different amount depending on grid
+    // resolution, so stretch to this grid's own tonal range (3rd-97th
+    // percentile) rather than assume the source's own 0-1 range still holds.
+    const sorted = Float32Array.from(raw).sort();
+    const lo = sorted[Math.floor(count * 0.03)], hi = sorted[Math.floor(count * 0.97)];
+    const span = Math.max(hi - lo, 0.01);
+
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const idx = j * n + i;
+        cells[idx * 2] = i;
+        cells[idx * 2 + 1] = j;
+        data[idx * 4] = THREE.MathUtils.clamp((raw[idx] - lo) / span, 0, 1);
+        data[idx * 4 + 1] = 0.28 * Math.hypot(i - c, j - c) / maxR;
+        data[idx * 4 + 2] = (Math.abs(Math.sin(i * 127.1 + j * 311.7) * 43758.5453) % 1) - 0.5;
+        data[idx * 4 + 3] = (i + j) / (2 * (n - 1));
+      }
+    }
+
+    const base = new THREE.PlaneGeometry(1, 1);
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.index = base.index.clone();
+    geo.setAttribute('position', base.attributes.position.clone());
+    geo.setAttribute('normal', base.attributes.normal.clone());
+    geo.setAttribute('uv', base.attributes.uv.clone());
+    geo.setAttribute('aCell', new THREE.InstancedBufferAttribute(cells, 2));
+    geo.setAttribute('aData', new THREE.InstancedBufferAttribute(data, 4));
+    geo.instanceCount = count;
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 2);
+    base.dispose();
+    return geo;
+  }
+
+  // Builds the lattice reveal's InstancedMesh the first time it's needed (see
+  // enterLatticeReveal). Placed relative to the camera's own current
+  // position/orientation, same technique and same reasoning as
+  // buildShapesSwarm: by the time this fires the camera is done moving for
+  // the rest of the scene, so a placement derived from its live matrix holds.
+  buildLatticeReveal() {
+    this.latticeBuilt = true;
+
+    const n = LATTICE_N_STEPS[0];
+    this.latticeGeometries = { [n]: this.buildLatticeGeometry(n) };
+    this.latticeActiveN = n;
+
+    this.latticeMaterial = createLatticeRevealMaterial(n, LATTICE_CURLED_INTRO);
+
+    this.camera.updateMatrixWorld();
+    const forward = new THREE.Vector3();
+    this.camera.getWorldDirection(forward);
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
+    const depth = this.camera.position.length();
+    const halfHeight = Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * depth;
+    const halfWidth = halfHeight * this.camera.aspect;
+    const latticeScreenX = this.isPortrait ? LATTICE_SCREEN_X_PORTRAIT : LATTICE_SCREEN_X;
+    const latticeScreenY = this.isPortrait ? LATTICE_SCREEN_Y_PORTRAIT : LATTICE_SCREEN_Y;
+    const offsetX = (latticeScreenX - 0.5) * 2 * halfWidth;
+    const offsetY = (0.5 - latticeScreenY) * 2 * halfHeight;
+    const anchor = new THREE.Vector3()
+      .copy(this.camera.position)
+      .addScaledVector(forward, depth)
+      .addScaledVector(right, offsetX)
+      .addScaledVector(up, offsetY);
+
+    this.latticeGroup = new THREE.Group();
+    this.latticeGroup.visible = false; // enterLatticeReveal shows it
+    this.latticeGroup.position.copy(anchor);
+    this.latticeGroup.quaternion.copy(this.camera.quaternion);
+    const latticeScaleBasis = this.isPortrait ? Math.min(halfWidth, halfHeight) : halfHeight;
+    const latticeScaleFraction = this.isPortrait ? LATTICE_SCALE_FRACTION_PORTRAIT : LATTICE_SCALE_FRACTION;
+    this.latticeGroup.scale.setScalar(latticeScaleBasis * latticeScaleFraction);
+    this.scene.add(this.latticeGroup);
+
+    this.latticeMesh = new THREE.Mesh(this.latticeGeometries[n], this.latticeMaterial);
+    this.latticeMesh.frustumCulled = false;
+    this.latticeGroup.add(this.latticeMesh);
+
+    this.latticeStartTime = performance.now();
+    this.latticeIntroStart = this.latticeStartTime;
+  }
+
+  // Scroll forward into the chapter: builds the grid on first call, then
+  // replays the real-time pop-in wavefront every time (so scrolling back out
+  // and forward in again still reads as an entrance, not silence). Also
+  // resets back to the default resolution on every entrance, so a visitor
+  // who stepped it up, scrolled away, and scrolled back down again meets the
+  // same default the first-time visitor sees - the resolution buttons are a
+  // side feature, not a sticky preference.
+  enterLatticeReveal() {
+    if (!this.latticeBuilt) this.buildLatticeReveal();
+    else this.setLatticeResolution(LATTICE_N_STEPS[0]);
+    this.latticeGroup.visible = true;
+    this.latticeIntroStart = performance.now();
+  }
+
+  // Scroll back out of the chapter: no retreat animation needed (unlike the
+  // shapes swarm, nothing here is flying anywhere) - uProgress unwinding back
+  // toward 0 already reads as the marks returning to their at-rest state, so
+  // this just stops rendering them.
+  exitLatticeReveal() {
+    if (!this.latticeBuilt) return;
+    this.latticeGroup.visible = false;
+  }
+
+  // Driven by main.js's own scroll-scrubbed proxy tween across the chapter's
+  // scroll span - see LATTICE_START in main.js.
+  setLatticeProgress(p) {
+    if (this.latticeMaterial) this.latticeMaterial.uniforms.uProgress.value = p;
+  }
+
+  // Swaps in a different resolution's geometry (built lazily and cached the
+  // first time it's requested) and replays the diagonal wavefront pop-in at
+  // the new density - reuses the exact entrance the chapter's default 24x24
+  // reveal already trained the eye on, rather than a hard cut or crossfade.
+  // Driven by the resolution buttons in main.js: hover previews a density on
+  // pointer/keyboard, click commits it as the fallback for touch, where
+  // hover doesn't fire. Purely a side feature layered on top of the
+  // scroll-scrubbed reveal itself (setLatticeProgress), which this never
+  // touches.
+  setLatticeResolution(n) {
+    if (!this.latticeBuilt || n === this.latticeActiveN) return;
+    if (!this.latticeGeometries[n]) this.latticeGeometries[n] = this.buildLatticeGeometry(n);
+    this.latticeMesh.geometry = this.latticeGeometries[n];
+    this.latticeMaterial.uniforms.uN.value = n;
+    this.latticeActiveN = n;
+    this.latticeIntroStart = performance.now();
   }
 
 }

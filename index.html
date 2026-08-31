@@ -49,6 +49,14 @@
     
     <div id="app">
 
+      <!-- Mobile-only, shown via JS (see initGyroPermissionButton in
+           gyro-controls.js) only on iOS 13+, where DeviceOrientationEvent.requestPermission
+           exists and gates the tilt-driven camera controls in chapter 1/7
+           behind a prompt that WebKit only honors from a real click - a
+           bare touchstart/scroll gesture doesn't satisfy it, hence a real
+           tappable button instead of a silent background request. -->
+      <button id="gyro-permission-btn" class="gyro-permission-btn" type="button" hidden>Tap to enable tilt controls</button>
+
       <div id="landing-scene" class="background-white">
 
         <div class="landing-scene-description">
@@ -98,11 +106,35 @@
           </div>
         </div>
 
+        <!-- Chapter six (Emergence, the shapes swarm) is currently shelved in
+             main.js in favor of the lattice reveal chapter below, which
+             occupies its numbered slot - left intact, unused, for a one-step
+             revert. -->
         <div class="chapter-six-description">
           <div class="chapter-six-description-left">
             <h6 class="chapter-number">Chapter 06<span class="chapter-number-sub">— Emergence</span></h6>
             <h1 class="split-reveal-six">Emergence</h1>
             <h3 class="split-reveal-six">Every piece finds its own shape. Held together by nothing but constant attraction, they become something no single one could be.</h3>
+          </div>
+        </div>
+
+        <div class="chapter-lattice-description">
+          <div class="chapter-lattice-hover-zone" aria-hidden="true"></div>
+
+          <div class="chapter-lattice-description-left">
+            <h6 class="chapter-number">Chapter 06<span class="chapter-number-sub">— Resolution</span></h6>
+            <h1 class="split-reveal-lattice">Resolution</h1>
+            <h3 class="split-reveal-lattice">Every mark already held its answer. Let the turbulence unwind, and the picture resolves itself.</h3>
+          </div>
+
+          <div class="chapter-lattice-resolution">
+            <span class="chapter-lattice-resolution-label" aria-hidden="true">&times;</span>
+            <div class="chapter-lattice-resolution-grid" role="group" aria-label="Lattice grid resolution">
+              <button type="button" class="chapter-lattice-resolution-btn" data-lattice-n="24" aria-pressed="true">24</button>
+              <button type="button" class="chapter-lattice-resolution-btn" data-lattice-n="48" aria-pressed="false">48</button>
+              <button type="button" class="chapter-lattice-resolution-btn" data-lattice-n="72" aria-pressed="false">72</button>
+              <button type="button" class="chapter-lattice-resolution-btn" data-lattice-n="96" aria-pressed="false">96</button>
+            </div>
           </div>
         </div>
 
@@ -130,7 +162,14 @@
       </div>
 
     </div>
-    
+
+    <!-- "Lenna" cursor-follow tooltip, shown while hovering the lattice grid
+         in chapter 6 - see .chapter-lattice-hover-zone above and main.js.
+         A top-level fixed element (not nested in the chapter overlay) so its
+         own position:fixed follows the cursor anywhere on screen without
+         being constrained by an ancestor's positioning context. -->
+    <div class="lattice-hover-tooltip" aria-hidden="true">Lenna</div>
+
     <script type="module" src="/src/core/main.js"></script>
   </body>
 </html>

@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ViewHelper } from 'three/addons/helpers/ViewHelper.js';
 import BaseThreeJS from '../core/threejs-scene-module';
 import { PALETTE } from '../materials/palette.js';
+import { isMobileViewport, GYRO_DEBUG, gyroDebugLog } from '../core/gyro-controls.js';
 
 // TEMP DEBUG: lets the scroll/mouse-driven camera in update() be overridden
 // by free-orbit drag so the door/stairs integration can be eyeballed from
@@ -20,6 +21,14 @@ const DEBUG_ORBIT = false;
 // switch this off (or just ignore mouse movement) if you need to see the
 // exact unshifted CAMERA_POSITION/CAMERA_LOOK_AT shot again.
 const PARALLAX_ENABLED = true;
+
+// Extra multiplier applied to parallaxMaxOffset only on mobile (gyro-driven
+// tilt, see onDeviceOrientation), on top of the normal mouse-parallax swing
+// below - lets tilt swing further than a desktop mouse ever reaches, without
+// touching the desktop mouse feel (already carefully tuned against
+// CAMERA_POSITION/CAMERA_LOOK_AT) since it's gated to isMobileViewport in
+// update().
+const GYRO_PARALLAX_BOOST = 5;
 
 // Door + stairs constants, ported as-is from prototype/door-stairs.js - see
 // that file for the full reasoning behind each mesh's pivot/scale trick.
@@ -94,6 +103,22 @@ const CAMERA_LOOK_AT = new THREE.Vector3(-681, -627, 965);
 const MOBILE_BREAKPOINT = 767; // matches every other mobile check in this codebase
 const MOBILE_CAMERA_SHIFT_X = 900;
 
+// Chapter seven's post-stairs camera move (see updateDoorApproachCamera()
+// below and its use in main.js): rotation axis for swinging the camera
+// around doorApproachTarget, and how much of the remaining distance to it
+// the camera closes by the end of that move - 0 would leave the radius
+// unchanged (a pure swing, no dolly), 1 would put the camera on top of the
+// target. TUNE ME alongside CAMERA_POSITION/CAMERA_LOOK_AT above if the
+// door/stairs framing changes.
+const DOOR_APPROACH_AXIS = new THREE.Vector3(0, 1, 0);
+const DOOR_APPROACH_CLOSE_FACTOR = 0.45;
+// How far above CAMERA_LOOK_AT's own height doorApproachTarget sits - that
+// original height was aimed at the stairs (see CAMERA_LOOK_AT above), well
+// below the doorway itself, so aiming straight at it head-on at the end of
+// the approach move reads as looking down at the stairs rather than at the
+// door. Lifts the final gaze back up toward the door opening instead.
+const DOOR_APPROACH_TARGET_Y_LIFT = 400;
+
 export default class WindowsScene extends BaseThreeJS {
   constructor(containerId, loadingManager, renderer) {
     super(containerId, loadingManager, renderer);
@@ -108,6 +133,11 @@ export default class WindowsScene extends BaseThreeJS {
     this.mouseOffset = new THREE.Vector2(0, 0);
     this.windowHalfX = window.innerWidth / 2;
     this.windowHalfY = window.innerHeight / 2;
+    // Set on the first 'deviceorientation' reading - see onDeviceOrientation().
+    this.gyroBaseline = null;
+    // 0..1 progress of the post-stairs door-approach camera move - see
+    // updateDoorApproachCamera()/update()'s GYRO_PARALLAX_BOOST fade-out.
+    this.doorApproachProgress = 0;
 
     // The scroll timeline in main.js tweens this directly; update() layers
     // the mouse-parallax offset on top each frame rather than the two
@@ -122,6 +152,10 @@ export default class WindowsScene extends BaseThreeJS {
 
     this.onDocumentMouseMove = this.onDocumentMouseMove.bind(this);
     document.addEventListener('mousemove', this.onDocumentMouseMove);
+    // Mobile substitute for the mousemove parallax above - see
+    // onDeviceOrientation() and LandingScene's copy of the same pattern.
+    this.onDeviceOrientation = this.onDeviceOrientation.bind(this);
+    window.addEventListener('deviceorientation', this.onDeviceOrientation);
 
     this.init();
   }
@@ -144,6 +178,30 @@ export default class WindowsScene extends BaseThreeJS {
       this.scrollCameraBase.lookAt.x += MOBILE_CAMERA_SHIFT_X;
     }
     this.camera.position.copy(this.scrollCameraBase.position);
+
+    // Chapter seven's post-stairs camera move swings the camera from the
+    // framing just set above around to look straight down the door's own
+    // central axis (X:0, matching DOOR_WIDTH's own centering - the door's
+    // true, unshifted world position, unlike scrollCameraBase above) rather
+    // than cutting across to it in a straight line - see
+    // updateDoorApproachCamera() below. doorApproachTarget doubles as both
+    // the pivot the position swings around AND the point main.js's own
+    // lookAt tween eases toward, so by the end the camera is centered on it
+    // and looking straight at it - on mobile too, where MOBILE_CAMERA_SHIFT_X
+    // above only corrects the wide diagonal shot's own framing and would
+    // otherwise drag this head-on shot off-center by that same amount.
+    // Captured once here, from the resting position/look-at this init() just
+    // set, rather than live-recomputed per frame - the pivot and the sweep
+    // angle stay fixed for the whole approach move regardless of the
+    // mouse-parallax offset update() layers on top every frame.
+    this.doorApproachTarget = new THREE.Vector3(0, this.scrollCameraBase.lookAt.y + DOOR_APPROACH_TARGET_Y_LIFT, this.scrollCameraBase.lookAt.z);
+    this.doorApproachOffsetStart = this.scrollCameraBase.position.clone().sub(this.doorApproachTarget);
+    // atan2(x, z), not (z, x) - angle measured from the +Z axis (the door's
+    // own facing direction, see DOOR_DEPTH above) rather than from +X, so
+    // angle:0 below means "aligned with the door on the Z axis" like the
+    // rest of this feature is named for.
+    this.doorApproachAngleStart = Math.atan2(this.doorApproachOffsetStart.x, this.doorApproachOffsetStart.z);
+    this.doorApproachOffsetScratch = new THREE.Vector3();
 
     // Mouse-parallax offset in update() below, sized as a fraction of the
     // actually-visible frame at the camera's real distance from what it's
@@ -476,6 +534,31 @@ export default class WindowsScene extends BaseThreeJS {
     });
   }
 
+  // Arcs scrollCameraBase.position around doorApproachTarget (set in init()
+  // above) from the door/stairs chapter's angled framing toward dead ahead
+  // (angle:0, i.e. aligned with the door on the Z axis) while closing
+  // DOOR_APPROACH_CLOSE_FACTOR of the remaining distance to it - an
+  // orbiting dolly-in rather than a straight-line truck across, so the
+  // sweep is visible as the camera rotating into place instead of sliding
+  // past the door at a fixed angle. t: 0 = the door/stairs chapter's
+  // resting shot, 1 = head-on and dollied in. main.js drives lookAt itself
+  // (a plain lerpVectors toward doorApproachTarget) alongside this.
+  updateDoorApproachCamera(t) {
+    const angle = -this.doorApproachAngleStart * t;
+    const radiusFactor = 1 - DOOR_APPROACH_CLOSE_FACTOR * t;
+    this.doorApproachOffsetScratch
+      .copy(this.doorApproachOffsetStart)
+      .applyAxisAngle(DOOR_APPROACH_AXIS, angle)
+      .multiplyScalar(radiusFactor);
+    this.scrollCameraBase.position.addVectors(this.doorApproachTarget, this.doorApproachOffsetScratch);
+    // Read by update() to fade GYRO_PARALLAX_BOOST out over the same move -
+    // by t:1 (this approach finished) mobile tilt-parallax is fully zeroed,
+    // so it can't fight the deliberate head-on dolly at the end. Since
+    // main.js drives t off a scrubbed ScrollTrigger, scrolling back out
+    // restores it the same way the camera position itself unwinds.
+    this.doorApproachProgress = t;
+  }
+
   update() {
     // TEMP DEBUG - see DEBUG_ORBIT above. Bypasses the scroll/mouse camera
     // drive entirely so drag-to-orbit isn't fighting it every frame.
@@ -497,8 +580,16 @@ export default class WindowsScene extends BaseThreeJS {
       // normalizing by that before scaling to parallaxMaxOffset (set in init(),
       // sized off the actual visible frame) is what keeps this noticeable
       // regardless of how far away the camera ends up sitting.
-      const targetOffsetX = THREE.MathUtils.clamp((this.mouseX / this.windowHalfX) * this.parallaxMaxOffset.x, -this.parallaxMaxOffset.x, this.parallaxMaxOffset.x);
-      const targetOffsetY = THREE.MathUtils.clamp((-this.mouseY / this.windowHalfY) * this.parallaxMaxOffset.y, -this.parallaxMaxOffset.y, this.parallaxMaxOffset.y);
+      // Fades linearly to 0 over the door-approach move (doorApproachProgress
+      // 0->1, see updateDoorApproachCamera()) so parallax - mobile tilt and
+      // desktop mouse alike - settles down to nothing by the time that
+      // cinematic dolly-in finishes, instead of still swaying the camera
+      // during the head-on shot at the end.
+      const boost = (isMobileViewport.matches ? GYRO_PARALLAX_BOOST : 1) * (1 - this.doorApproachProgress);
+      const maxOffsetX = this.parallaxMaxOffset.x * boost;
+      const maxOffsetY = this.parallaxMaxOffset.y * boost;
+      const targetOffsetX = THREE.MathUtils.clamp((this.mouseX / this.windowHalfX) * maxOffsetX, -maxOffsetX, maxOffsetX);
+      const targetOffsetY = THREE.MathUtils.clamp((-this.mouseY / this.windowHalfY) * maxOffsetY, -maxOffsetY, maxOffsetY);
       this.mouseOffset.x += (targetOffsetX - this.mouseOffset.x) * 0.05;
       this.mouseOffset.y += (targetOffsetY - this.mouseOffset.y) * 0.05;
     }
@@ -514,5 +605,27 @@ export default class WindowsScene extends BaseThreeJS {
   onDocumentMouseMove(event) {
     this.mouseX = event.clientX - this.windowHalfX;
     this.mouseY = event.clientY - this.windowHalfY;
+  }
+
+  // Tilt-driven substitute for onDocumentMouseMove on mobile - see
+  // LandingScene's copy of the same pattern for the full reasoning behind
+  // the baseline-delta approach and the gamma/beta axis mapping.
+  onDeviceOrientation(event) {
+    if (GYRO_DEBUG) {
+      gyroDebugLog(`ch7 raw: a=${event.alpha} b=${event.beta} g=${event.gamma}\nmobile=${isMobileViewport.matches} innerW=${window.innerWidth}`);
+    }
+    if (!isMobileViewport.matches) return;
+    if (event.gamma === null || event.beta === null) return;
+    if (!this.gyroBaseline) {
+      this.gyroBaseline = { beta: event.beta, gamma: event.gamma };
+    }
+    const GYRO_SENSITIVITY = 6; // pixel-equivalents per degree of tilt off baseline - tune to taste
+    const deltaGamma = event.gamma - this.gyroBaseline.gamma;
+    const deltaBeta = event.beta - this.gyroBaseline.beta;
+    this.mouseX = THREE.MathUtils.clamp(deltaGamma * GYRO_SENSITIVITY, -this.windowHalfX, this.windowHalfX);
+    this.mouseY = THREE.MathUtils.clamp(-deltaBeta * GYRO_SENSITIVITY, -this.windowHalfY, this.windowHalfY);
+    if (GYRO_DEBUG) {
+      gyroDebugLog(`ch7: dG=${deltaGamma.toFixed(1)} dB=${deltaBeta.toFixed(1)}\nmouseX=${this.mouseX.toFixed(0)} mouseY=${this.mouseY.toFixed(0)}`);
+    }
   }
 }

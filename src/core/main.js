@@ -9,12 +9,15 @@ import WindowsScene, { DOOR_STAIRS_DURATION } from '../scenes/windows-scene';
 import Lenis from 'lenis'
 import { PALETTE } from '../materials/palette.js';
 import { decodeFinalFrame, replaceImgWithCanvas } from './gifScrubber.js';
+import { isMobileViewport, initGyroPermissionButton } from './gyro-controls.js';
 
 
 let activeScene = null;
 let fps = 60;
-// World-axes gizmo is hidden below this viewport size so it doesn't overlap the hero text.
-const isMobileViewport = window.matchMedia('(max-width: 767px), (max-height: 500px)');
+// Shows the "tap to enable tilt controls" button (see index.html/style.css)
+// only where iOS actually gates deviceorientation behind it - see
+// gyro-controls.js. No-op everywhere else.
+initGyroPermissionButton();
 const title = new SplitType(".split");
 // Chapter two's text, split separately so it's excluded from the page-load reveal below.
 const chapterTwoTitle = new SplitType(".split-reveal");
@@ -28,9 +31,16 @@ gsap.set('.split-reveal-four .char', { yPercent: 100 });
 // Chapter five's text, split separately for the same reason.
 const chapterFiveTitle = new SplitType(".split-reveal-five");
 gsap.set('.split-reveal-five .char', { yPercent: 100 });
-// Chapter six's text, split separately for the same reason.
+// Chapter six's text, split separately for the same reason. Chapter six
+// itself (the shapes swarm) is currently commented out below in favor of the
+// lattice reveal chapter inserted in its place - left in place, unused,
+// rather than torn out, so it's a one-step revert.
 const chapterSixTitle = new SplitType(".split-reveal-six");
 gsap.set('.split-reveal-six .char', { yPercent: 100 });
+// Lattice reveal chapter's text (currently occupying chapter six's numbered
+// slot - see LATTICE_START below), split separately for the same reason.
+const chapterLatticeTitle = new SplitType(".split-reveal-lattice");
+gsap.set('.split-reveal-lattice .char', { yPercent: 100 });
 // Chapter seven's text, split separately for the same reason.
 const chapterSevenTitle = new SplitType(".split-reveal-seven");
 gsap.set('.split-reveal-seven .char', { yPercent: 100 });
@@ -216,24 +226,21 @@ const DOMINO_FALL_STOPPAGE = 1;
 const DOMINO_FALL_DURATION = 3;
 // Scrubbed length of chapter six's opening beat: every fallen piece scatters out of frame.
 const DOMINO_CLEAR_DURATION = 2;
-// Negative here means the swarm's entrance starts that much earlier than the
-// domino clear's own nominal end, overlapping its tail instead of waiting for
-// it to fully finish - same "starts early, overlapping the invisible tail"
-// technique the shelved chapter six reveal above used for the same reason.
+// Kept only for the (currently shelved - see LATTICE_START below) shapes
+// swarm chapter's own constants, so re-enabling it later doesn't need these
+// re-derived. Not folded into the `end` calc while shelved.
 const SHAPES_SWARM_STOPPAGE = -0.5;
-// Scroll room the swarm actually gets to live in, from SHAPES_SWARM_START
-// through to SHAPES_SWARM_EXIT_START (which sits SWARM_RETREAT_DURATION +
-// SHAPES_SWARM_EXIT_BUFFER before the end of this span - see its own
-// declaration) and then the pinned range's own end past that. Needs real room:
-// too narrow and a normal scroll blows straight through both the entrance and
-// the auto-exit-before-the-wipe trigger in one motion, and a scroll-back
-// meant to look at the swarm again crosses both triggers too, landing back on
-// SHAPES_SWARM_START's own reverse (exit) branch instead of stopping on
-// SHAPES_SWARM_EXIT_START's reverse (re-enter) one - reads as "it won't come
-// back." This also doubles as the same trailing-room fix CHAPTER_FIVE_TAIL
-// has for its own trigger: without it, scrolling up out of the pin and back
-// down again could never re-fire a reverse branch at all.
 const SHAPES_SWARM_TAIL = 4;
+// Breathing room after the domino clear, before the lattice reveal chapter
+// (currently occupying chapter six's numbered slot) begins.
+const LATTICE_STOPPAGE = 0.5;
+// Scrubbed length of the lattice's own reveal: how long scrolling through
+// this chapter takes to unwind the turbulence and resolve the hidden portrait.
+const LATTICE_DURATION = 3;
+// Trailing scroll room past the lattice's own reveal, so scrolling back up
+// has something to cross before LATTICE_START's reverse branch re-fires -
+// same reasoning as CHAPTER_FIVE_TAIL/the swarm's own SHAPES_SWARM_TAIL above.
+const LATTICE_TAIL = 1;
 // Closing wipe: a halftone-style wave of growing dark dots (Bauhaus exhibition
 // poster reference) that merges into a solid field, covering the screen at the
 // very end of the current scrollable range (right after the shapes swarm's own
@@ -242,10 +249,16 @@ const SHAPES_SWARM_TAIL = 4;
 const CHAPTER_SIX_REVEAL_STOPPAGE = 0;
 // Scrubbed length of the circle-grid reveal.
 const CHAPTER_SIX_REVEAL_DURATION = 2;
-// Scrubbed length of the windows scene's own small scroll-driven camera move,
-// right after it's swapped in (see the setActiveScene(windowsScene) call in
-// onload()).
-const WINDOWS_CAMERA_DURATION = 2;
+// Small scroll-only pause after the door/stairs cascade finishes, before the
+// camera starts swinging toward the door - lets the finished structure
+// register for a beat first, same idiom as every other chapter's own
+// _STOPPAGE/_GAP constant above.
+const DOOR_APPROACH_GAP = 0.4;
+// Scrubbed length of the windows scene's post-stairs camera move: an arcing
+// dolly-in that swings the camera from the door/stairs chapter's angled
+// framing around to face the door head-on (see updateDoorApproachCamera() in
+// windows-scene.js and its use below).
+const DOOR_APPROACH_DURATION = 2;
 
 // Scroll progress bar fill (see .scroll-progress-fill in style.css) - scaled
 // directly off this same ScrollTrigger's own progress below, so it's tied to
@@ -263,10 +276,11 @@ const landingSceneTimeline = gsap.timeline({
 		start: 'top top', // when the top of the trigger hits the top of the viewport
 		// Scroll length: two viewport heights for the original phases, plus room for
 		// every chapter's stoppage/duration above. Recomputed on resize.
-		// Chapter six's reveal terms (+ CHAPTER_SIX_REVEAL_STOPPAGE + CHAPTER_SIX_REVEAL_DURATION)
-		// are left out while that section is commented out below - add them back in
-		// alongside it.
-		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION + sphereMoveDuration + CHAPTER_FIVE_STOPPAGE + CHAPTER_FIVE_DURATION + DOMINO_FALL_STOPPAGE + DOMINO_FALL_DURATION + CHAPTER_FIVE_TAIL + DOMINO_CLEAR_DURATION + SHAPES_SWARM_STOPPAGE + SHAPES_SWARM_TAIL + CHAPTER_SIX_REVEAL_STOPPAGE + CHAPTER_SIX_REVEAL_DURATION + WINDOWS_CAMERA_DURATION + DOOR_STAIRS_DURATION)),
+		// The shapes swarm chapter's own terms (SHAPES_SWARM_STOPPAGE + SHAPES_SWARM_TAIL)
+		// are left out while it's shelved in favor of the lattice reveal chapter
+		// (LATTICE_STOPPAGE + LATTICE_DURATION + LATTICE_TAIL) below - swap them back
+		// in alongside re-enabling that section.
+		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION + sphereMoveDuration + CHAPTER_FIVE_STOPPAGE + CHAPTER_FIVE_DURATION + DOMINO_FALL_STOPPAGE + DOMINO_FALL_DURATION + CHAPTER_FIVE_TAIL + DOMINO_CLEAR_DURATION + LATTICE_STOPPAGE + LATTICE_DURATION + LATTICE_TAIL + CHAPTER_SIX_REVEAL_STOPPAGE + CHAPTER_SIX_REVEAL_DURATION + DOOR_STAIRS_DURATION + DOOR_APPROACH_GAP + DOOR_APPROACH_DURATION)),
 		invalidateOnRefresh: true,
 		scrub: 1, // lower scrub means the camera reacts more directly to scrolling
 		markers: false,
@@ -776,8 +790,15 @@ function onload(){
 	// camera. Pivots around the midpoint between the grid and the cube's landing spot
 	// (not the world origin) so both stay framed through the turn. Idle mouse-look is
 	// locked for the duration so it doesn't fight this every frame.
-	const orbitRadiusCloseFactor = .65; // fraction of the starting distance-to-pivot closed by the end
-	const orbitAngle = -Math.PI / 2; // sweep direction - flip the sign if the grid rotates the wrong way
+	// Fraction of the starting distance-to-pivot closed by the end. Dollying in this much
+	// crops the grid's width on a narrow mobile viewport, so mobile closes in less, which
+	// (since the same factor scales the camera's height too, per the Y-axis-only rotation
+	// below) also leaves the camera sitting higher at the end of the move.
+	const orbitRadiusCloseFactor = isMobileViewport.matches ? .40 : .65;
+	// On mobile the narrower viewport reads the same sweep as roughly half the rotation
+	// (the cube settles off to the side instead of under the camera), so it gets double
+	// the angle here to actually land in the top-down view.
+	const orbitAngle = (isMobileViewport.matches ? -Math.PI : -Math.PI / 2); // sweep direction - flip the sign if the grid rotates the wrong way
 	const orbitAxis = new THREE.Vector3(0, 1, 0);
 	// Tilts the camera down off its top-down idle angle over the back end of the move,
 	// resolving into a 3/4 view with real depth as the orbit settles.
@@ -935,17 +956,23 @@ function onload(){
 	}, PHASE6_START);
 
 	// The orbit continues sweeping from where chapter four's own orbit left off, while
-	// the camera also climbs and pans toward the domino row's own center.
+	// the camera also climbs and pans toward the domino row's own center. Angle end matches
+	// angle start (rather than a fixed value) so this phase never adds further rotation on
+	// top of chapter four's own orbit - the domino row direction is read live off the
+	// camera's screen-right each frame (see dominoLocalFileDirection below), so any extra
+	// rotation here would visibly swing the row's axis mid-fall.
 	const orbit2AngleStart = orbitAngle;
-	const orbit2AngleEnd = -Math.PI / 2;
+	const orbit2AngleEnd = orbitAngle;
 	const orbit2TiltStart = orbitTiltAngle;
 	const orbit2TiltEnd = 0;
 	const orbit2RadiusFactor = 1 - orbitRadiusCloseFactor;
 	// Extra world units the camera climbs, so the grid pulls back and reads smaller in frame.
 	const orbit2CameraLift = 2000;
 	// Pans the pivot toward the domino row's actual screen position - "up a little, not too much".
+	// Mobile's text sits closer to the top of a portrait screen, so it gets a stronger
+	// upward pan to bring the scene up toward it.
 	const chapterFiveRecenterRight = 200;
-	const chapterFiveRecenterUp = -150;
+	const chapterFiveRecenterUp = isMobileViewport.matches ? -220 : -150;
 	const chapterFiveScreenRight = new THREE.Vector3();
 	const chapterFiveScreenUp = new THREE.Vector3();
 	const orbit2Pivot = new THREE.Vector3();
@@ -1421,45 +1448,192 @@ function onload(){
 		}, DOMINO_CLEAR_START + offsetTime);
 	});
 
-	// Chapter six's shapes swarm: once the dominoes have cleared the frame, a swarm
-	// of 3D die-cut shapes flies in from outside the frame and settles into a
-	// physically-collided cluster toward screen-right, with constant central
-	// attraction so it keeps drifting instead of freezing solid once settled.
-	// Built lazily on first entrance (see enterShapesSwarm) since the camera is
-	// fixed by this point in the timeline, which is what its own placement is
-	// derived from. Scrolling back past this point lerps every shape back out to
-	// where it flew in from, rather than just leaving it sitting there while
-	// earlier chapters' own camera moves play out underneath it.
-	const SHAPES_SWARM_START = DOMINO_CLEAR_START + DOMINO_CLEAR_DURATION + SHAPES_SWARM_STOPPAGE;
+	// Chapter six's shapes swarm - SHELVED for now in favor of the lattice
+	// reveal chapter just below, which occupies chapter six's numbered slot
+	// (see index.html/style.css's chapter-six-description, still intact and
+	// unused). Re-enable by uncommenting this block, swapping
+	// SHAPES_SWARM_STOPPAGE/SHAPES_SWARM_TAIL back into the `end` calc above,
+	// and re-basing LATTICE_START (or removing the lattice chapter) below.
+	//
+	// // Once the dominoes have cleared the frame, a swarm of 3D die-cut shapes
+	// // flies in from outside the frame and settles into a physically-collided
+	// // cluster toward screen-right, with constant central attraction so it
+	// // keeps drifting instead of freezing solid once settled. Built lazily on
+	// // first entrance (see enterShapesSwarm) since the camera is fixed by this
+	// // point in the timeline, which is what its own placement is derived from.
+	// // Scrolling back past this point lerps every shape back out to where it
+	// // flew in from, rather than just leaving it sitting there while earlier
+	// // chapters' own camera moves play out underneath it.
+	// const SHAPES_SWARM_START = DOMINO_CLEAR_START + DOMINO_CLEAR_DURATION + SHAPES_SWARM_STOPPAGE;
+	//
+	// // Chapter six's text, same slide-in-and-fade reveal as every other chapter,
+	// // played alongside the swarm's own entrance below.
+	// const chapterSixTimeline = gsap.timeline({ paused: true })
+	// 	.to('.chapter-six-description', { autoAlpha: 1, ease: 'power1.inOut', duration: 1 }, 0)
+	// 	.to('.split-reveal-six .char', { yPercent: 0, ease: 'power1.inOut', duration: 1, stagger: .001 }, 0);
+	//
+	// const CHAPTER_SIX_HIDE_DURATION = .2;
+	//
+	// landingSceneTimeline.call(() => {
+	// 	if (landingSceneTimeline.scrollTrigger.direction === 1) {
+	// 		landingScene.enterShapesSwarm();
+	// 		chapterSixTimeline.play();
+	// 	} else {
+	// 		landingScene.exitShapesSwarm();
+	// 		chapterSixTimeline.pause();
+	// 		gsap.to('.chapter-six-description', {
+	// 			autoAlpha: 0,
+	// 			ease: 'power1.in',
+	// 			duration: CHAPTER_SIX_HIDE_DURATION,
+	// 			onComplete: () => chapterSixTimeline.pause(0),
+	// 		});
+	// 	}
+	// }, null, SHAPES_SWARM_START);
+	// // Consumes SHAPES_SWARM_TAIL's own span so the timeline's real duration extends
+	// // past SHAPES_SWARM_START by that much (see its declaration) - without this the
+	// // trigger above sits exactly at the pinned range's end, with no scroll distance
+	// // left to cross back through to re-fire the reverse (exit) branch.
+	// landingSceneTimeline.to({}, { duration: SHAPES_SWARM_TAIL }, SHAPES_SWARM_START);
 
-	// Chapter six's text, same slide-in-and-fade reveal as every other chapter,
-	// played alongside the swarm's own entrance below.
-	const chapterSixTimeline = gsap.timeline({ paused: true })
-		.to('.chapter-six-description', { autoAlpha: 1, ease: 'power1.inOut', duration: 1 }, 0)
-		.to('.split-reveal-six .char', { yPercent: 0, ease: 'power1.inOut', duration: 1, stagger: .001 }, 0);
+	// Lattice reveal chapter: a field of thin marks, one per grid cell, each
+	// holding one brightness value of a hidden portrait it hasn't shown yet.
+	// As the chapter's own scroll progress goes 0->1, a turbulence flow
+	// unwinds and every mark widens/turns/brightens toward its own value,
+	// resolving the portrait out of the noise. Built lazily on first entrance
+	// (see enterLatticeReveal), camera-relative like the swarm above.
+	const LATTICE_START = DOMINO_CLEAR_START + DOMINO_CLEAR_DURATION + LATTICE_STOPPAGE;
 
-	const CHAPTER_SIX_HIDE_DURATION = .2;
+	// Reuses chapter six's numbered slot/title styling (split-reveal-lattice/
+	// chapter-lattice-description - see index.html), since chapter six itself
+	// is shelved above.
+	const chapterLatticeTimeline = gsap.timeline({ paused: true })
+		.to('.chapter-lattice-description', { autoAlpha: 1, ease: 'power1.inOut', duration: 1 }, 0)
+		.to('.split-reveal-lattice .char', { yPercent: 0, ease: 'power1.inOut', duration: 1, stagger: .001 }, 0);
+
+	const CHAPTER_LATTICE_HIDE_DURATION = .2;
+
+	// Resolution buttons (see index.html's .chapter-lattice-resolution):
+	// hover previews a density - mirrors the pointer-driven feel the swarm
+	// chapter above already established - while click commits it as the
+	// fallback for touch, where hover never fires. Entirely a side feature
+	// layered on top of the scroll-scrubbed reveal below; landingScene's own
+	// setLatticeResolution never touches uProgress.
+	const LATTICE_DEFAULT_N = 24;
+	const latticeResolutionButtons = Array.from(document.querySelectorAll('.chapter-lattice-resolution-btn'));
+	const setActiveLatticeResolutionButton = (n) => {
+		latticeResolutionButtons.forEach((btn) => {
+			btn.setAttribute('aria-pressed', String(Number(btn.dataset.latticeN) === n));
+		});
+	};
+	latticeResolutionButtons.forEach((btn) => {
+		const n = Number(btn.dataset.latticeN);
+		const activate = () => {
+			landingScene.setLatticeResolution(n);
+			setActiveLatticeResolutionButton(n);
+		};
+		btn.addEventListener('pointerenter', activate);
+		btn.addEventListener('focus', activate);
+		btn.addEventListener('click', activate);
+	});
+
+	// "Lenna" cursor-follow tooltip while hovering the lattice grid - the
+	// classic test image the grid resolves into on scroll. Purely DOM/CSS:
+	// the hover region (.chapter-lattice-hover-zone) is a plain
+	// absolutely-positioned div approximating the grid's own screen
+	// footprint rather than a 3D raycast, so this needs nothing from
+	// landingScene itself - see the CSS comment on that class for the math.
+	const latticeHoverZone = document.querySelector('.chapter-lattice-hover-zone');
+	const latticeTooltip = document.querySelector('.lattice-hover-tooltip');
+	let latticeTooltipActive = false;
+	// Force-hides the tooltip immediately regardless of pointer state - used
+	// below (and from the LATTICE_START/CHAPTER_SIX_REVEAL_START .call()s
+	// further down) wherever the grid itself disappears or starts being
+	// covered, so it can't get stuck floating on screen mid-scroll with
+	// nothing left under it to hover - a pointerleave on the hover zone
+	// alone only fires if the cursor actually moves off it, not when the
+	// grid vanishes out from under a stationary cursor.
+	const hideLatticeTooltip = () => {
+		if (!latticeTooltip) return;
+		latticeTooltip.classList.remove('is-visible');
+		latticeTooltipActive = false;
+	};
+	if (latticeHoverZone && latticeTooltip) {
+		const LATTICE_TOOLTIP_OFFSET_X = 18;
+		const LATTICE_TOOLTIP_OFFSET_Y = -18;
+		const LATTICE_TOOLTIP_LERP = 0.22;
+		const latticeTooltipPos = { x: 0, y: 0 };
+		const latticeTooltipTarget = { x: 0, y: 0 };
+
+		const setLatticeTooltipTarget = (e) => {
+			latticeTooltipTarget.x = e.clientX + LATTICE_TOOLTIP_OFFSET_X;
+			latticeTooltipTarget.y = e.clientY + LATTICE_TOOLTIP_OFFSET_Y;
+		};
+
+		latticeHoverZone.addEventListener('pointerenter', (e) => {
+			setLatticeTooltipTarget(e);
+			// Snap on entry instead of easing in from (0,0) - only the ongoing
+			// follow should feel like it's trailing, not the first appearance.
+			latticeTooltipPos.x = latticeTooltipTarget.x;
+			latticeTooltipPos.y = latticeTooltipTarget.y;
+			latticeTooltip.style.transform = `translate3d(${latticeTooltipPos.x}px, ${latticeTooltipPos.y}px, 0)`;
+			latticeTooltip.classList.add('is-visible');
+			latticeTooltipActive = true;
+		});
+		latticeHoverZone.addEventListener('pointermove', setLatticeTooltipTarget);
+		latticeHoverZone.addEventListener('pointerleave', hideLatticeTooltip);
+
+		// Reuses GSAP's own ticker rather than a second requestAnimationFrame
+		// loop, since one is already driving every other animated thing on
+		// this site. Soft-trailing follow (lerp toward the cursor, not a 1:1
+		// snap) to match that same eased feel.
+		gsap.ticker.add(() => {
+			if (!latticeTooltipActive) return;
+			latticeTooltipPos.x += (latticeTooltipTarget.x - latticeTooltipPos.x) * LATTICE_TOOLTIP_LERP;
+			latticeTooltipPos.y += (latticeTooltipTarget.y - latticeTooltipPos.y) * LATTICE_TOOLTIP_LERP;
+			latticeTooltip.style.transform = `translate3d(${latticeTooltipPos.x}px, ${latticeTooltipPos.y}px, 0)`;
+		});
+	}
 
 	landingSceneTimeline.call(() => {
 		if (landingSceneTimeline.scrollTrigger.direction === 1) {
-			landingScene.enterShapesSwarm();
-			chapterSixTimeline.play();
+			landingScene.enterLatticeReveal();
+			chapterLatticeTimeline.play();
+			// enterLatticeReveal resets the scene itself back to the default
+			// resolution on every (re-)entrance - keep the buttons' own active
+			// state in sync so a visitor who stepped it up, scrolled away, and
+			// scrolled back down doesn't see a stale button lit.
+			setActiveLatticeResolutionButton(LATTICE_DEFAULT_N);
 		} else {
-			landingScene.exitShapesSwarm();
-			chapterSixTimeline.pause();
-			gsap.to('.chapter-six-description', {
+			landingScene.exitLatticeReveal();
+			hideLatticeTooltip();
+			chapterLatticeTimeline.pause();
+			gsap.to('.chapter-lattice-description', {
 				autoAlpha: 0,
 				ease: 'power1.in',
-				duration: CHAPTER_SIX_HIDE_DURATION,
-				onComplete: () => chapterSixTimeline.pause(0),
+				duration: CHAPTER_LATTICE_HIDE_DURATION,
+				onComplete: () => chapterLatticeTimeline.pause(0),
 			});
 		}
-	}, null, SHAPES_SWARM_START);
-	// Consumes SHAPES_SWARM_TAIL's own span so the timeline's real duration extends
-	// past SHAPES_SWARM_START by that much (see its declaration) - without this the
-	// trigger above sits exactly at the pinned range's end, with no scroll distance
-	// left to cross back through to re-fire the reverse (exit) branch.
-	landingSceneTimeline.to({}, { duration: SHAPES_SWARM_TAIL }, SHAPES_SWARM_START);
+	}, null, LATTICE_START);
+
+	// The actual reveal: scroll-scrubbed, not real-time, so it unwinds and
+	// re-tangles at scroll speed exactly like every other beat in this
+	// timeline - see LandingScene.setLatticeProgress, which just forwards
+	// this proxy's own value straight to the shader's uProgress uniform.
+	const latticeProxy = { p: 0 };
+	landingSceneTimeline.to(latticeProxy, {
+		p: 1,
+		ease: 'none',
+		duration: LATTICE_DURATION,
+		onUpdate: () => landingScene.setLatticeProgress(latticeProxy.p),
+	}, LATTICE_START);
+
+	// Consumes LATTICE_TAIL's own span so the timeline's real duration extends
+	// past the reveal's own end by that much - same reasoning as
+	// SHAPES_SWARM_TAIL above: without it, scrolling back up from the
+	// following chapter would have no distance to cross before re-entering
+	// this one's own scrubbed range.
+	landingSceneTimeline.to({}, { duration: LATTICE_TAIL }, LATTICE_START + LATTICE_DURATION);
 
 	// Closing wipe: a grid of dark dots grows from a seed point near the
 	// bottom-left corner - the growing-circle device from the Bauhaus
@@ -1471,18 +1645,15 @@ function onload(){
 	// rebuilt on resize - same reasoning as chapters two-five's text above:
 	// rebuilding would orphan the tweens already bound to these elements.
 	//
-	// CHAPTER_SIX_REVEAL_START is kept only as the reference point
-	// SHAPES_SWARM_EXIT_START below is timed backward from, and for the `end`
-	// calc's own scroll-room bookkeeping - the wipe itself no longer fires off
-	// this scroll position directly (see SHAPES_SWARM_EXIT_START's own comment
-	// for why).
-	const CHAPTER_SIX_REVEAL_START = SHAPES_SWARM_START + SHAPES_SWARM_TAIL + CHAPTER_SIX_REVEAL_STOPPAGE;
-	// How long, after exitShapesSwarm() is called, its retreat animation actually
-	// takes to finish (see SWARM_RETREAT_DURATION) plus a small safety margin -
-	// used to position SHAPES_SWARM_EXIT_START far enough ahead of
-	// CHAPTER_SIX_REVEAL_START for the retreat to (at a normal scroll pace)
-	// finish before the wipe starts.
-	const SHAPES_SWARM_EXIT_BUFFER = 0.2;
+	// Timed off the lattice chapter's own end (LATTICE_START + LATTICE_DURATION
+	// + LATTICE_TAIL) now that it occupies chapter six's slot in place of the
+	// shelved shapes swarm - was SHAPES_SWARM_START + SHAPES_SWARM_TAIL before.
+	const CHAPTER_SIX_REVEAL_START = LATTICE_START + LATTICE_DURATION + LATTICE_TAIL + CHAPTER_SIX_REVEAL_STOPPAGE;
+
+	// The dot wipe is about to start covering the grid - the tooltip has
+	// nothing left to hover once it does, in either scroll direction (this
+	// point can also be crossed scrolling back up from chapter seven).
+	landingSceneTimeline.call(hideLatticeTooltip, null, CHAPTER_SIX_REVEAL_START);
 
 	const revealContainer = document.querySelector('.chapter-six-reveal');
 	const REVEAL_DOT_SPACING = 90; // grid pitch in px - tune to taste
@@ -1520,23 +1691,25 @@ function onload(){
 		}
 	}
 
-	// Retreats the shapes swarm before the wipe below starts covering the
-	// screen, rather than leaving it sitting there mid-cluster underneath the
-	// dots. Timed backward from CHAPTER_SIX_REVEAL_START by the swarm's own
-	// retreat duration plus a small buffer, so the retreat has (at a normal
-	// scroll pace) mostly finished by the time the wipe begins - scrolling
-	// unusually fast through that gap can still catch it mid-retreat, same
-	// trade-off every other scroll-scrubbed beat in this timeline makes.
-	// Scrolling back past this point the other way re-enters the swarm, same
-	// as scrolling back past SHAPES_SWARM_START does on the entrance side.
-	const SHAPES_SWARM_EXIT_START = CHAPTER_SIX_REVEAL_START - SWARM_RETREAT_DURATION - SHAPES_SWARM_EXIT_BUFFER;
-	landingSceneTimeline.call(() => {
-		if (landingSceneTimeline.scrollTrigger.direction === 1) {
-			landingScene.exitShapesSwarm();
-		} else {
-			landingScene.enterShapesSwarm();
-		}
-	}, null, SHAPES_SWARM_EXIT_START);
+	// SHELVED alongside the swarm chapter above: retreated it before the wipe
+	// started covering the screen, since (unlike the lattice reveal) it's a
+	// physically-animated cluster that shouldn't just freeze or vanish. Re-add
+	// alongside re-enabling that chapter.
+	//
+	// // How long, after exitShapesSwarm() is called, its retreat animation
+	// // actually takes to finish (see SWARM_RETREAT_DURATION) plus a small
+	// // safety margin - used to position SHAPES_SWARM_EXIT_START far enough
+	// // ahead of CHAPTER_SIX_REVEAL_START for the retreat to (at a normal
+	// // scroll pace) finish before the wipe starts.
+	// const SHAPES_SWARM_EXIT_BUFFER = 0.2;
+	// const SHAPES_SWARM_EXIT_START = CHAPTER_SIX_REVEAL_START - SWARM_RETREAT_DURATION - SHAPES_SWARM_EXIT_BUFFER;
+	// landingSceneTimeline.call(() => {
+	// 	if (landingSceneTimeline.scrollTrigger.direction === 1) {
+	// 		landingScene.exitShapesSwarm();
+	// 	} else {
+	// 		landingScene.enterShapesSwarm();
+	// 	}
+	// }, null, SHAPES_SWARM_EXIT_START);
 
 	// Every dot's own start delay is proportional to its distance from the seed, so
 	// the wave washes outward continuously; every dot still finishes growing by
@@ -1590,17 +1763,17 @@ function onload(){
 		duration: WINDOWS_SWAP_START - CHAPTER_SIX_REVEAL_START,
 	}, CHAPTER_SIX_REVEAL_START);
 
-	// Chapter six's own text has nothing left to fade it out on its own (the dot
-	// wipe was always the true finale before chapter seven existed) - scroll-
-	// scrubbed straight against the timeline, same as the dot wipe itself,
-	// rather than a fixed real-time tween, so it tracks scroll speed exactly:
-	// starts fading the moment the swarm retreat kicks off (SHAPES_SWARM_EXIT_START)
-	// and is fully gone right as the dot wipe finishes covering the screen.
-	landingSceneTimeline.to('.chapter-six-description', {
+	// The lattice chapter's own text has nothing left to fade it out on its own
+	// (the dot wipe is the true finale before chapter seven) - scroll-scrubbed
+	// straight against the timeline, same as the dot wipe itself, rather than a
+	// fixed real-time tween, so it tracks scroll speed exactly: starts fading
+	// the moment the wipe begins and is fully gone right as it finishes
+	// covering the screen.
+	landingSceneTimeline.to('.chapter-lattice-description', {
 		autoAlpha: 0,
 		ease: 'power1.inOut',
-		duration: WINDOWS_SWAP_START - SHAPES_SWARM_EXIT_START,
-	}, SHAPES_SWARM_EXIT_START);
+		duration: WINDOWS_SWAP_START - CHAPTER_SIX_REVEAL_START,
+	}, CHAPTER_SIX_REVEAL_START);
 
 	// Chapter seven's text, same slide-in-and-fade reveal as every other
 	// chapter, played once the dot wipe has fully covered the screen and the
@@ -1627,42 +1800,6 @@ function onload(){
 		}
 	}, null, WINDOWS_SWAP_START);
 
-	// Small scroll-driven camera move once the windows scene is showing -
-	// a gentle dolly-in with a slight pan. Combined additively in
-	// WindowsScene#update() with its own mouse-parallax offset, rather than one
-	// overriding the other.
-	const WINDOWS_CAMERA_START = WINDOWS_SWAP_START;
-	// Explicit from/to (not live-captured) so a resize-triggered ScrollTrigger
-	// refresh can't re-capture a stale mid-scroll position as this tween's start -
-	// same reasoning as chapter three's directional-light fromTo above.
-	const windowsCameraFrom = {
-		position: windowsScene.scrollCameraBase.position.clone(),
-		lookAt: windowsScene.scrollCameraBase.lookAt.clone(),
-	};
-	// TODO: (1.5,-0.5,6)/(0.5,0,-5) were tuned for whatever this scene was
-	// going to hold before the door/stairs prototype was ported in - at that
-	// scale they'd land the camera inside the door geometry. Frozen to a
-	// no-op (from === to) for now, matching the prototype's own camera,
-	// which never moves on scroll either - only the door/stairs meshes
-	// animate there. Retune to an actual dolly-in point once the door/stairs
-	// framing itself is confirmed to look right.
-	const windowsCameraTo = {
-		position: windowsCameraFrom.position.clone(),
-		lookAt: windowsCameraFrom.lookAt.clone(),
-	};
-	const windowsCamera = { t: 0 };
-	landingSceneTimeline.fromTo(windowsCamera, {
-		t: 0,
-	}, {
-		t: 1,
-		ease: 'power2.inOut',
-		duration: WINDOWS_CAMERA_DURATION,
-		onUpdate: () => {
-			windowsScene.scrollCameraBase.position.lerpVectors(windowsCameraFrom.position, windowsCameraTo.position, windowsCamera.t);
-			windowsScene.scrollCameraBase.lookAt.lerpVectors(windowsCameraFrom.lookAt, windowsCameraTo.lookAt, windowsCamera.t);
-		},
-	}, WINDOWS_CAMERA_START);
-
 	// Door opens and both stair flights cascade, scrubbed continuously
 	// against scroll (reversible on scroll-back) exactly like the
 	// standalone prototype - nested directly rather than call()-triggered
@@ -1670,7 +1807,39 @@ function onload(){
 	// time pace and this needs to stay tied to scroll position instead. See
 	// DOOR_STAIRS_DURATION in windows-scene.js, folded into this timeline's
 	// own `end` calc above so there's actual scroll room for it to play out.
-	landingSceneTimeline.add(windowsScene.doorStairsTimeline, WINDOWS_CAMERA_START);
+	landingSceneTimeline.add(windowsScene.doorStairsTimeline, WINDOWS_SWAP_START);
+
+	// See DOOR_APPROACH_GAP above.
+	const DOOR_APPROACH_START = WINDOWS_SWAP_START + DOOR_STAIRS_DURATION + DOOR_APPROACH_GAP;
+
+	// Camera swings from the door/stairs chapter's angled framing around to
+	// look straight down the door's own central axis while dollying in -
+	// an arcing approach rather than a straight-line truck across, so the
+	// rotation actually reads as the camera turning to face the door rather
+	// than sliding past it. windowsScene.updateDoorApproachCamera() owns the
+	// pivot-and-rotate math for the position itself (mirrors chapter four's
+	// own orbitOffset camera orbit above); lookAt is just a plain
+	// lerpVectors here since it's only an aim point, not a physically-
+	// traversed path, straight at windowsScene.doorApproachTarget - the same
+	// point the position arc pivots around, so by t:1 the camera is
+	// centered on it and looking straight at it. Explicit fromTo (lookAt
+	// captured once, not live-read at tween time) so a resize-triggered
+	// ScrollTrigger refresh can't re-capture a stale mid-scroll lookAt as
+	// this tween's start - same reasoning as chapter three's directional-
+	// light fromTo above.
+	const doorApproachLookAtFrom = windowsScene.scrollCameraBase.lookAt.clone();
+	const doorApproach = { t: 0 };
+	landingSceneTimeline.fromTo(doorApproach, {
+		t: 0,
+	}, {
+		t: 1,
+		ease: 'power2.inOut',
+		duration: DOOR_APPROACH_DURATION,
+		onUpdate: () => {
+			windowsScene.updateDoorApproachCamera(doorApproach.t);
+			windowsScene.scrollCameraBase.lookAt.lerpVectors(doorApproachLookAtFrom, windowsScene.doorApproachTarget, doorApproach.t);
+		},
+	}, DOOR_APPROACH_START);
 
 };
 

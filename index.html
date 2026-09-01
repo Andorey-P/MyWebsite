@@ -100,9 +100,9 @@
 
         <div class="chapter-five-description">
           <div class="chapter-five-description-left">
-            <h6 class="chapter-number">Chapter 05<span class="chapter-number-sub">— Synthesis</span></h6>
-            <h1 class="split-reveal-five">Synthesis</h1>
-            <h3 class="split-reveal-five">The exception finds its place. What once broke the pattern becomes part of a larger order.</h3>
+            <h6 class="chapter-number">Chapter 05<span class="chapter-number-sub">— Uncertainty</span></h6>
+            <h1 class="split-reveal-five">Uncertainty</h1>
+            <h3 class="split-reveal-five">Understanding how something works does not always mean knowing what it will do.</h3>
           </div>
         </div>
 
@@ -122,9 +122,9 @@
           <div class="chapter-lattice-hover-zone" aria-hidden="true"></div>
 
           <div class="chapter-lattice-description-left">
-            <h6 class="chapter-number">Chapter 06<span class="chapter-number-sub">— Resolution</span></h6>
-            <h1 class="split-reveal-lattice">Resolution</h1>
-            <h3 class="split-reveal-lattice">Every mark already held its answer. Let the turbulence unwind, and the picture resolves itself.</h3>
+            <h6 class="chapter-number">Chapter 06<span class="chapter-number-sub">— Detail</span></h6>
+            <h1 class="split-reveal-lattice">Detail</h1>
+            <h3 class="split-reveal-lattice">Meaning takes shape gradually. Sometimes clarity is simply a matter of seeing enough of the pieces.</h3>
           </div>
 
           <div class="chapter-lattice-resolution">
@@ -140,11 +140,30 @@
 
         <!-- Windows scene: swapped in via setActiveScene() right as the closing wipe
              finishes covering the screen (see main.js), sitting behind the dots so the
-             swap is invisible until they shrink back away. -->
+             swap is invisible until they shrink back away. Chapter seven's own closing
+             wipe (see main.js's DOOR_MASK_START section) drives a CSS mask-image
+             directly on this element - a grid of square cells that dissolve away in a
+             random per-cell order, clipping this element's own content away cell by
+             cell, rather than an overlay painted on top - so whatever's genuinely
+             underneath (currently .chapter-six-reveal's backdrop) shows through the
+             dissolved cells as-is. -->
         <div id="windows-scene" class="windows-scene"></div>
 
         <!-- Closing wipe: growing circle-grid reveal, see main.js's CHAPTER_SIX_REVEAL section. -->
-        <div class="chapter-six-reveal" aria-hidden="true"></div>
+        <div class="chapter-six-reveal" aria-hidden="true">
+          <!-- Threshold links: Works/About/Contact, stacked large and dead-center,
+               faded in via GSAP autoAlpha (see main.js's DOOR_PASS_THROUGH_END
+               call()) the instant the camera reaches the end of the door, and
+               back out on scroll-back. z-index set explicitly (unlike the reveal
+               dots, which are all z-index:auto) so it stacks above them
+               regardless of the dots being appended into this same container
+               after it at runtime. -->
+          <nav class="chapter-six-reveal-links">
+            <a href="#" class="chapter-six-reveal-links-link">Works</a>
+            <a href="#" class="chapter-six-reveal-links-link">About</a>
+            <a href="#" class="chapter-six-reveal-links-link">Contact</a>
+          </nav>
+        </div>
 
         <!-- PLACEHOLDER copy - swap for real chapter seven title/subtitle.
              Placed after .windows-scene/.chapter-six-reveal so it stacks above

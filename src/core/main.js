@@ -5,7 +5,7 @@ import SplitType from 'split-type'
 
 import { LoadingManager } from "three";
 import LandingScene, { SWARM_RETREAT_DURATION } from "../scenes/landing-scene";
-import WindowsScene, { DOOR_STAIRS_DURATION } from '../scenes/windows-scene';
+import WindowsScene, { DOOR_STAIRS_DURATION, STAIRS_GROWTH_DURATION } from '../scenes/windows-scene';
 import Lenis from 'lenis'
 import { PALETTE } from '../materials/palette.js';
 import { decodeFinalFrame, replaceImgWithCanvas } from './gifScrubber.js';
@@ -260,6 +260,17 @@ const DOOR_APPROACH_GAP = 0.4;
 // windows-scene.js and its use below).
 const DOOR_APPROACH_DURATION = 2;
 
+// Small scroll-only pause after the camera finishes passing through the
+// doorway, before the closing pixel-dissolve mask starts - same idiom as
+// DOOR_APPROACH_GAP above: lets the passed-through frame register for a
+// beat before the wipe begins, rather than picking up the instant the
+// camera move ends.
+const DOOR_MASK_GAP = 0.4;
+// Scrubbed length of the closing dissolve mask's own progress, from fully
+// revealed to fully dissolved away - see its build further down (search
+// DOOR_MASK_START).
+const DOOR_MASK_DURATION = 1.5;
+
 // Scroll progress bar fill (see .scroll-progress-fill in style.css) - scaled
 // directly off this same ScrollTrigger's own progress below, so it's tied to
 // the exact same scroll-distance `end` calc every chapter above is scrubbed
@@ -280,7 +291,7 @@ const landingSceneTimeline = gsap.timeline({
 		// are left out while it's shelved in favor of the lattice reveal chapter
 		// (LATTICE_STOPPAGE + LATTICE_DURATION + LATTICE_TAIL) below - swap them back
 		// in alongside re-enabling that section.
-		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION + sphereMoveDuration + CHAPTER_FIVE_STOPPAGE + CHAPTER_FIVE_DURATION + DOMINO_FALL_STOPPAGE + DOMINO_FALL_DURATION + CHAPTER_FIVE_TAIL + DOMINO_CLEAR_DURATION + LATTICE_STOPPAGE + LATTICE_DURATION + LATTICE_TAIL + CHAPTER_SIX_REVEAL_STOPPAGE + CHAPTER_SIX_REVEAL_DURATION + DOOR_STAIRS_DURATION + DOOR_APPROACH_GAP + DOOR_APPROACH_DURATION)),
+		end: () => '+=' + (window.innerHeight * 2 + window.innerHeight * CHAPTER_STOPPAGE_PX_PER_UNIT * (CHAPTER_STOPPAGE + CHAPTER_FOUR_STOPPAGE + PHASE4_DURATION + sphereMoveDuration + CHAPTER_FIVE_STOPPAGE + CHAPTER_FIVE_DURATION + DOMINO_FALL_STOPPAGE + DOMINO_FALL_DURATION + CHAPTER_FIVE_TAIL + DOMINO_CLEAR_DURATION + LATTICE_STOPPAGE + LATTICE_DURATION + LATTICE_TAIL + CHAPTER_SIX_REVEAL_STOPPAGE + CHAPTER_SIX_REVEAL_DURATION + DOOR_STAIRS_DURATION + DOOR_APPROACH_GAP + DOOR_APPROACH_DURATION + STAIRS_GROWTH_DURATION + DOOR_MASK_GAP + DOOR_MASK_DURATION)),
 		invalidateOnRefresh: true,
 		scrub: 1, // lower scrub means the camera reacts more directly to scrolling
 		markers: false,
@@ -1786,6 +1797,12 @@ function onload(){
 
 	landingSceneTimeline.call(() => {
 		if (landingSceneTimeline.scrollTrigger.direction === 1) {
+			// Same fast-scroll handoff guard as CHAPTER_THREE_TRIGGER/CHAPTER_FOUR_TRIGGER/
+			// CHAPTER_FIVE_TRIGGER above - snaps chapter six's lattice text (and, riding its
+			// autoAlpha, the resolution buttons nested inside it) to its hidden end state
+			// first so a fast scroll can't leave it overlapping chapter seven's text.
+			chapterLatticeTimeline.pause(0);
+			gsap.set('.chapter-lattice-description', { autoAlpha: 0 });
 			setActiveScene(windowsScene);
 			chapterSevenTimeline.play();
 		} else {
@@ -1797,6 +1814,13 @@ function onload(){
 				onComplete: () => chapterSevenTimeline.pause(0),
 			});
 			setActiveScene(landingScene);
+			// Mirrors chapterTwoTimeline.play() in CHAPTER_THREE_TRIGGER's own reverse
+			// branch above - re-shows chapter six's lattice text (and, riding its
+			// autoAlpha, the resolution buttons) when scrolling back into its zone, so a
+			// fast reverse scroll from deep in chapter seven (past the door/mask reveal)
+			// reliably brings it back rather than leaving it snapped hidden from the
+			// forward branch's own guard above.
+			chapterLatticeTimeline.play();
 		}
 	}, null, WINDOWS_SWAP_START);
 
@@ -1840,6 +1864,194 @@ function onload(){
 			windowsScene.scrollCameraBase.lookAt.lerpVectors(doorApproachLookAtFrom, windowsScene.doorApproachTarget, doorApproach.t);
 		},
 	}, DOOR_APPROACH_START);
+
+	// Continuing to scroll past the doorApproach move above, the first
+	// flight + landing swell wider in a staggered ripple - see
+	// buildStairsGrowth() in windows-scene.js for the full reasoning. Nested
+	// straight into the master timeline for continuous scroll-scrubbing, same
+	// reasoning as doorStairsTimeline above.
+	const STAIRS_GROWTH_START = DOOR_APPROACH_START + DOOR_APPROACH_DURATION;
+	landingSceneTimeline.add(windowsScene.stairsGrowthTimeline, STAIRS_GROWTH_START);
+
+	// Same moment as the ripple above: the camera dollies the rest of the way
+	// through the doorway (see updateDoorPassThroughCamera() in
+	// windows-scene.js). Shares STAIRS_GROWTH_START and STAIRS_GROWTH_DURATION
+	// exactly with stairsGrowthTimeline so the two read as one beat rather
+	// than a camera move happening to overlap a separate stairs effect.
+	// power2.inOut, not expo like the door/stairs reveal cascade - this move
+	// passes through the viewport rather than arriving at a resting frame
+	// (same reasoning as the doorApproach tween just above).
+	// immediateRender: false - unlike doorApproach above, this tween's t:0
+	// state (doorPassThroughStartPosition) is NOT the chapter's resting
+	// camera pose, it's the pose from partway through a different tween. GSAP
+	// renders a fromTo()'s "from" state the instant it's created regardless
+	// of its position in the parent timeline, so without this it stomps
+	// scrollCameraBase.position to that mid-sequence pose as soon as this
+	// file runs, and it only unwinds once scroll first ticks and forces a
+	// real re-render at the actual (near-zero) playhead - visible as a flash
+	// to "in front of the door" on first entering the chapter.
+	const doorPassThrough = { t: 0 };
+	landingSceneTimeline.fromTo(doorPassThrough, {
+		t: 0,
+	}, {
+		t: 1,
+		immediateRender: false,
+		ease: 'power2.inOut',
+		duration: STAIRS_GROWTH_DURATION,
+		onUpdate: () => {
+			windowsScene.updateDoorPassThroughCamera(doorPassThrough.t);
+		},
+	}, STAIRS_GROWTH_START + 0.1);
+
+	// Closing circle mask: same growing-circle device as the CHAPTER_SIX_REVEAL
+	// dot wipe above, but seeded dead-center rather than off-center/staggered,
+	// and a genuine CSS mask-image on #windows-scene itself rather than a
+	// shape painted on top of it - a growing transparent hole that clips the
+	// element's own rendered content away, so whatever's actually underneath
+	// (currently .chapter-six-reveal's backdrop) shows through as-is instead
+	// of a stand-in color. Grows once the camera has finished passing through
+	// the doorway (plus DOOR_MASK_GAP's own beat).
+	const DOOR_PASS_THROUGH_END = STAIRS_GROWTH_START + 0.1 + STAIRS_GROWTH_DURATION;
+
+	// Chapter seven's own text has nothing left to say once the camera turns
+	// to face the door head-on (STAIRS_GROWTH_START, the doorApproach tween's
+	// own end - see above) and starts dollying through it - fades out over
+	// that whole dolly-through move, scroll-scrubbed like the camera move
+	// itself rather than real-time, so it tracks scroll speed exactly and is
+	// fully gone right as the camera reaches the door (DOOR_PASS_THROUGH_END).
+	// Distinct from chapterSevenTimeline's own show/hide fade at
+	// WINDOWS_SWAP_START above - that pair only fires right at the chapter's
+	// entrance/exit boundary, well before this range, so the two never fight
+	// over the same element's opacity at once.
+	landingSceneTimeline.to('.chapter-seven-description', {
+		autoAlpha: 0,
+		ease: 'power1.in',
+		duration: DOOR_PASS_THROUGH_END - STAIRS_GROWTH_START,
+	}, STAIRS_GROWTH_START);
+
+	// Right as the camera reaches the end of the door - before DOOR_MASK_GAP's
+	// pause even starts - the backdrop itself (.chapter-six-reveal-dot, the
+	// layer the mask above reveals) flips to a signal color and the
+	// Works/About/Contact nav fades in over it, then both reverse on
+	// scroll-back. Same call()+direction idiom as every other chapter
+	// transition above (e.g. WINDOWS_SWAP_START's call()), and quick
+	// real-time tweens rather than scroll-scrubbed against the timeline, so
+	// they read as a snap rather than tracking scroll speed.
+	const DOOR_REVEAL_COLOR = '#f8e0ad'; // PALETTE.paper - the site's warm cream tone (palette.js)
+	const DOOR_REVEAL_COLOR_DEFAULT = '#2a2018'; // matches .chapter-six-reveal-dot's resting background in style.css
+	const DOOR_REVEAL_COLOR_DURATION = .3;
+	const DOOR_REVEAL_NAV_DURATION = .4;
+	landingSceneTimeline.call(() => {
+		const isForward = landingSceneTimeline.scrollTrigger.direction === 1;
+		if (isForward) {
+			// Same fast-scroll handoff guard as WINDOWS_SWAP_START above - snaps
+			// chapter seven's "Threshold" text to hidden first so a fast scroll
+			// through the whole chapter can't leave chapterSevenTimeline's own
+			// entrance fade (still mid-flight in real time) racing against - and
+			// overwriting - the scrub-tied fade-out tween above, stuck visible
+			// over the door reveal / pixel dissolve.
+			chapterSevenTimeline.pause(0);
+			gsap.set('.chapter-seven-description', { autoAlpha: 0 });
+		} else {
+			// Re-shows it when scrolling back into chapter seven's own zone.
+			chapterSevenTimeline.play();
+		}
+		gsap.to('.chapter-six-reveal-dot', {
+			backgroundColor: isForward ? DOOR_REVEAL_COLOR : DOOR_REVEAL_COLOR_DEFAULT,
+			ease: 'power1.inOut',
+			duration: DOOR_REVEAL_COLOR_DURATION,
+		});
+		gsap.to('.chapter-six-reveal-links', {
+			autoAlpha: isForward ? 1 : 0,
+			ease: 'power1.inOut',
+			duration: DOOR_REVEAL_NAV_DURATION,
+		});
+	}, null, DOOR_PASS_THROUGH_END);
+
+	const DOOR_MASK_START = DOOR_PASS_THROUGH_END + DOOR_MASK_GAP;
+	const windowsSceneEl = document.getElementById('windows-scene');
+	// Pixel-dissolve mask: a grid of square cells over the viewport, each
+	// assigned its own random threshold once at setup time (same
+	// "precomputed once against the viewport, not rebuilt on resize" idiom
+	// as the reveal dots' grid above). Driving doorMask.t past a cell's own
+	// threshold clears that cell out of a small canvas, which is re-applied
+	// as this element's alpha mask - so cells disappear in a random
+	// per-cell order rather than the mask growing outward from one point.
+	const DOOR_MASK_CELL_SIZE = 48; // px, grid pitch for the dissolve
+	// DOOR_MASK_STOP_STEPS out of this many "steps" worth of cells (by
+	// threshold, highest first) are left permanently undissolved - see
+	// DOOR_MASK_MAX_T below. Purely a ratio; nothing here quantizes redraws
+	// (an earlier version did and it caused visible batching - see
+	// renderDoorMask's own comment further down).
+	const DOOR_MASK_STEPS = 32;
+	// Caps the dissolve at this many steps short of full - the last couple
+	// steps' worth of cells (highest thresholds) never dissolve, so a sparse
+	// scatter of the windows scene stays visible over the revealed backdrop
+	// rather than the wipe clearing every last pixel away.
+	const DOOR_MASK_STOP_STEPS = 2;
+	const DOOR_MASK_MAX_T = (DOOR_MASK_STEPS - DOOR_MASK_STOP_STEPS) / DOOR_MASK_STEPS;
+	const doorMaskCols = Math.ceil(window.innerWidth / DOOR_MASK_CELL_SIZE);
+	const doorMaskRows = Math.ceil(window.innerHeight / DOOR_MASK_CELL_SIZE);
+	const doorMaskThresholds = Array.from({ length: doorMaskCols * doorMaskRows }, () => Math.random());
+	const doorMaskCanvas = document.createElement('canvas');
+	doorMaskCanvas.width = doorMaskCols * DOOR_MASK_CELL_SIZE;
+	doorMaskCanvas.height = doorMaskRows * DOOR_MASK_CELL_SIZE;
+	const doorMaskCtx = doorMaskCanvas.getContext('2d');
+	// Rebuilds the mask canvas for a given t and re-applies it - called
+	// directly from onUpdate on every tick (see below) rather than only
+	// once per quantized step as an earlier version of this did. That
+	// throttling was meant to cut down on redundant toDataURL work, but it
+	// backfired: ScrollTrigger's own scrub smoothing (scrub: 1 - see where
+	// the ScrollTrigger is created above) means t keeps creeping for up to
+	// a second after the user stops scrolling, and while it creeps slowly
+	// the throttle would sit on the same step for a while, then jump
+	// straight to a later one - so a cluster of cells whose thresholds fell
+	// in between would all pop at once, well after the rest had already
+	// settled. Rendering on every tick lets cells cross their own threshold
+	// and dissolve individually, right when they actually do.
+	const renderDoorMask = (t) => {
+		// Cells whose own threshold sits above DOOR_MASK_MAX_T never dissolve,
+		// even once the tween itself reaches t:1 - see DOOR_MASK_STOP_STEPS.
+		const clampedT = Math.min(t, DOOR_MASK_MAX_T);
+		// Opaque (alpha 1) everywhere by default - unmasked, renders
+		// normally - then each dissolved cell is cleared to transparent
+		// (alpha 0 - masked out, hidden), same alpha-based masking this
+		// replaces used via a plain radial-gradient.
+		doorMaskCtx.fillStyle = '#000';
+		doorMaskCtx.fillRect(0, 0, doorMaskCanvas.width, doorMaskCanvas.height);
+		for (let i = 0; i < doorMaskThresholds.length; i++) {
+			if (doorMaskThresholds[i] >= clampedT) continue;
+			const col = i % doorMaskCols;
+			const row = (i / doorMaskCols) | 0;
+			doorMaskCtx.clearRect(col * DOOR_MASK_CELL_SIZE, row * DOOR_MASK_CELL_SIZE, DOOR_MASK_CELL_SIZE, DOOR_MASK_CELL_SIZE);
+		}
+		const maskValue = `url(${doorMaskCanvas.toDataURL()})`;
+		windowsSceneEl.style.maskImage = maskValue;
+		windowsSceneEl.style.webkitMaskImage = maskValue;
+	};
+	const doorMask = { t: 0 };
+	landingSceneTimeline.fromTo(doorMask, {
+		t: 0,
+	}, {
+		t: 1,
+		// Linear, not eased: since each cell dissolves the instant t crosses
+		// its own random threshold, an easing curve here doesn't shape the
+		// dissolve's own motion (there isn't any - it's a per-cell snap) so
+		// much as it skews WHEN thresholds get crossed. An eased curve
+		// front-loads most crossings into one stretch of the scroll range
+		// and leaves the rest to a long, slow tail; linear keeps cells
+		// dissolving at a steady rate across the whole span instead.
+		ease: 'none',
+		duration: DOOR_MASK_DURATION,
+		onUpdate: () => renderDoorMask(doorMask.t),
+		// Belt-and-suspenders for the tween's own two endpoints - guarantees
+		// the mask is pixel-perfect fully opaque/fully dissolved right as the
+		// scroll reaches either end, in case GSAP's own boundary handling
+		// ever renders the very last onUpdate at a value fractionally short
+		// of the true 0/1 endpoint.
+		onComplete: () => renderDoorMask(1),
+		onReverseComplete: () => renderDoorMask(0),
+	}, DOOR_MASK_START);
 
 };
 

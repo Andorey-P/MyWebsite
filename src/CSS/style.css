@@ -527,6 +527,10 @@ body {
   background-size: auto;
   opacity: .2;
   mix-blend-mode:overlay;
+  /* Purely decorative - sits at the same z-index as .chapter-six-reveal-links
+     but later in the DOM, so without this it wins the stacking tie and
+     silently swallows clicks on the Works/About/Contact links underneath it. */
+  pointer-events: none;
 }
 
 /* Chapter two overlay: sits in the same spot as the chapter-one text, hidden
@@ -1166,6 +1170,76 @@ body {
   background: #2a2018;
   transform: scale(0);
   will-change: transform;
+}
+
+/* Threshold links: Works/About/Contact, stacked large and dead-center, faded
+   in via GSAP autoAlpha once the camera reaches the end of the door (see
+   main.js's DOOR_PASS_THROUGH_END call()). Explicit z-index (the reveal dots
+   above are all z-index:auto) keeps it stacked above them regardless of DOM
+   order, since the dots get appended into this same .chapter-six-reveal
+   container after it at runtime. pointer-events re-enabled here since the
+   parent container turns them off (its own dots are decorative and never
+   meant to be clickable). visibility:hidden set up front, same reasoning as
+   .chapter-lattice-description's own fix above - autoAlpha doesn't touch
+   visibility until GSAP's tween first renders, so without this the links
+   would be live/clickable (just invisible) before a visitor ever scrolls
+   this far. */
+.chapter-six-reveal-links {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  opacity: 0;
+  visibility: hidden;
+}
+
+.chapter-six-reveal-links-link {
+  font-family: 'Ivar Display';
+  font-size: clamp(3.2rem, 1.6rem + 8vw, 9rem);
+  font-weight: 400;
+  line-height: 1.05;
+  color: #2a2018;
+  text-decoration: none;
+  position: relative;
+  transform: translateX(0);
+}
+
+/* Staggered staircase: each line sits further right than the one above it,
+   symmetric around the container's own centered axis. transform rather than
+   margin/alignment, so it's a purely visual offset that doesn't disturb the
+   flex column's own centering of each line. */
+.chapter-six-reveal-links-link:nth-child(1) {
+  transform: translateX(-9vw);
+}
+
+.chapter-six-reveal-links-link:nth-child(2) {
+  transform: translateX(0);
+}
+
+.chapter-six-reveal-links-link:nth-child(3) {
+  transform: translateX(9vw);
+}
+
+.chapter-six-reveal-links-link::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0.08em;
+  width: 100%;
+  height: 2px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: right;
+  transition: transform 0.3s ease;
+}
+
+.chapter-six-reveal-links-link:hover::after {
+  transform: scaleX(1);
+  transform-origin: left;
 }
 
 /* Chapter seven overlay: same treatment as the chapters above, revealed in

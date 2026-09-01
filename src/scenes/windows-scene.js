@@ -79,6 +79,20 @@ export const DOOR_STAIRS_DURATION = DOOR_DURATION + FLOOR_DURATION
   + SECOND_FLOOR_DURATION
   + STAIR2_STAGGER * (STAIR2_COUNT - 1) + STAIR2_DURATION;
 
+// "Growth ripple" phase (see buildStairsGrowth() below) - plays as its own
+// scroll beat right after chapter seven's doorApproach camera move, so it
+// gets its own duration constants rather than folding into DOOR_STAIRS_DURATION
+// above (which only covers the initial door/stairs reveal cascade).
+const STAIRS_GROWTH_PEAK_SCALE = 4; // ~400% - the farthest tread from the door
+const STAIRS_GROWTH_DECAY = 0.9; // each next tread toward the door grows 10% less
+const STAIRS_GROWTH_TREAD_DURATION = 0.35;
+const STAIRS_GROWTH_STAGGER = 0.05;
+const STAIRS_GROWTH_EASE = 'expo.inOut'; // same snap-then-settle language as the reveal cascade above
+
+// this.stairs (STAIR_COUNT treads) plus this.secondFloor ripple one after
+// another - see main.js for how this sizes the scroll room for that beat.
+export const STAIRS_GROWTH_DURATION = STAIRS_GROWTH_STAGGER * STAIR_COUNT + STAIRS_GROWTH_TREAD_DURATION;
+
 // CAMERA POSITION + LOOK-AT - hand-tune these two. Both absolute world
 // positions (not an offset from anything), because with DEBUG_ORBIT's pan
 // enabled the camera can end up looking at any point, not just the door -
@@ -118,6 +132,18 @@ const DOOR_APPROACH_CLOSE_FACTOR = 0.45;
 // the approach move reads as looking down at the stairs rather than at the
 // door. Lifts the final gaze back up toward the door opening instead.
 const DOOR_APPROACH_TARGET_Y_LIFT = 400;
+
+// Chapter seven's final beat, played in lockstep with buildStairsGrowth()'s
+// ripple (see main.js - same start, same STAIRS_GROWTH_DURATION span) - a
+// straight dolly the rest of the way through the doorway, picking up right
+// where updateDoorApproachCamera()'s arc leaves off. By t:1 there the camera
+// is already dead-ahead (angle:0, X:0), so this is a plain push forward
+// along Z rather than another arc. Both endpoints TUNE ME alongside
+// CAMERA_POSITION/CAMERA_LOOK_AT above - how far past the door's own plane
+// (world Z:0, see DOOR_DEPTH above) reads as "fully through" for the
+// current geometry.
+const DOOR_PASS_THROUGH_END_Z = 2; // past the door's outer face
+const DOOR_PASS_THROUGH_LOOK_AT_END_Z = -500; // further out still, so the gaze stays ahead of the camera rather than crossing behind it
 
 export default class WindowsScene extends BaseThreeJS {
   constructor(containerId, loadingManager, renderer) {
@@ -203,6 +229,20 @@ export default class WindowsScene extends BaseThreeJS {
     this.doorApproachAngleStart = Math.atan2(this.doorApproachOffsetStart.x, this.doorApproachOffsetStart.z);
     this.doorApproachOffsetScratch = new THREE.Vector3();
 
+    // Precomputes where updateDoorApproachCamera(1) would leave the camera -
+    // i.e. this phase's own start state - without actually driving the
+    // camera there (this runs at init, before doorApproach has played). Same
+    // rotate-then-scale as that method, just done once here instead of
+    // per-frame.
+    this.doorPassThroughStartPosition = this.doorApproachTarget.clone().add(
+      this.doorApproachOffsetStart.clone()
+        .applyAxisAngle(DOOR_APPROACH_AXIS, -this.doorApproachAngleStart)
+        .multiplyScalar(1 - DOOR_APPROACH_CLOSE_FACTOR),
+    );
+    this.doorPassThroughStartLookAt = this.doorApproachTarget.clone();
+    this.doorPassThroughEndPosition = new THREE.Vector3(0, this.doorApproachTarget.y, DOOR_PASS_THROUGH_END_Z);
+    this.doorPassThroughEndLookAt = new THREE.Vector3(0, this.doorApproachTarget.y, DOOR_PASS_THROUGH_LOOK_AT_END_Z);
+
     // Mouse-parallax offset in update() below, sized as a fraction of the
     // actually-visible frame at the camera's real distance from what it's
     // looking at - keeps it proportionally correct however far CAMERA_OFFSET
@@ -216,6 +256,7 @@ export default class WindowsScene extends BaseThreeJS {
     this.parallaxMaxOffset = new THREE.Vector2(frameHalfWidth * 0.3, frameHalfHeight * 0.3);
 
     this.buildDoorStairs();
+    this.buildStairsGrowth();
 
     // TEMP DEBUG - see DEBUG_ORBIT above. enableZoom is off for the same
     // reason the door-stairs prototype turned it off: this scene shares the
@@ -422,6 +463,27 @@ export default class WindowsScene extends BaseThreeJS {
     this.floorOccluder.position.set(0, -DOOR_HEIGHT, DOOR_DEPTH / 2);
     this.door.add(this.floorOccluder);
 
+    // Cap at the tunnel's own outer end (world Z:0, the most-negative end of
+    // the DOOR_DEPTH run - the stairs sit on the opposite, +Z end). Default
+    // PlaneGeometry orientation already faces +Z, exactly the direction
+    // every camera position in this chapter looks from (see CAMERA_POSITION
+    // and updateDoorPassThroughCamera() above), so no rotation is needed.
+    // PALETTE.paper matches chapter six's own scene.background/fog color
+    // (see landing-scene.js), so the doorway reads as opening back onto that
+    // same backdrop rather than into a void - MeshBasicMaterial's default
+    // FrontSide means it simply disappears once the camera has passed it
+    // (DOOR_PASS_THROUGH_END_Z sits behind it, at a more negative Z).
+    // Starts fully transparent - opacity is driven up to 1 by
+    // updateDoorPassThroughCamera() below, in lockstep with the camera
+    // actually starting to move through the doorway, rather than sitting
+    // there solid for the whole chapter beforehand.
+    this.doorEndPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(DOOR_WIDTH, DOOR_HEIGHT),
+      new THREE.MeshBasicMaterial({ color: "#d04025", transparent: true, opacity: 0 }),
+    );
+    this.doorEndPlane.position.set(0, -DOOR_HEIGHT / 2, 0);
+    this.door.add(this.doorEndPlane);
+
     // Floor: left un-added to the scene, same as the prototype (its tween
     // still runs below - it just has nothing to visibly show for it).
     const floorGeometry = new THREE.PlaneGeometry(FLOOR_WIDTH, FLOOR_DEPTH);
@@ -534,6 +596,32 @@ export default class WindowsScene extends BaseThreeJS {
     });
   }
 
+  // Second scroll beat for the first flight, played after chapter seven's
+  // doorApproach camera move (see main.js) rather than as part of
+  // doorStairsTimeline above - the first flight (this.stairs, door-outward:
+  // index 0 nearest the door, see buildDoorStairs above) plus the landing it
+  // feeds into (this.secondFloor) swell wider (scale.x - both meshes are
+  // X-centered geometry, so growth is symmetric outward rather than from one
+  // edge, not the sideways-cascading this.stairs2 flight). The ripple starts
+  // at this.secondFloor - the far end of the flight, past the last tread -
+  // and travels back tread-by-tread toward the door, so the reveal order is
+  // the reverse of this.stairs. Each next tread's peak is 10% smaller than
+  // the one before (STAIRS_GROWTH_DECAY), so the swell dies out by the time
+  // it reaches the door instead of hitting every tread at full intensity.
+  // Growth stays - no tween back down to scale.x: 1.
+  buildStairsGrowth() {
+    const rippleOrder = [this.secondFloor, ...this.stairs.slice().reverse()];
+
+    this.stairsGrowthTimeline = gsap.timeline();
+    rippleOrder.forEach((mesh, i) => {
+      this.stairsGrowthTimeline.to(mesh.scale, {
+        x: STAIRS_GROWTH_PEAK_SCALE * STAIRS_GROWTH_DECAY ** i,
+        ease: STAIRS_GROWTH_EASE,
+        duration: STAIRS_GROWTH_TREAD_DURATION,
+      }, i * STAIRS_GROWTH_STAGGER);
+    });
+  }
+
   // Arcs scrollCameraBase.position around doorApproachTarget (set in init()
   // above) from the door/stairs chapter's angled framing toward dead ahead
   // (angle:0, i.e. aligned with the door on the Z axis) while closing
@@ -557,6 +645,21 @@ export default class WindowsScene extends BaseThreeJS {
     // main.js drives t off a scrubbed ScrollTrigger, scrolling back out
     // restores it the same way the camera position itself unwinds.
     this.doorApproachProgress = t;
+  }
+
+  // Continues straight on from updateDoorApproachCamera(1) - see
+  // doorPassThroughStart/EndPosition/LookAt in init() above - through the
+  // doorway itself. A plain lerp rather than another arc since the camera is
+  // already dead-ahead by the time this plays. main.js drives t off the same
+  // scrub window as buildStairsGrowth()'s ripple so the two read as one beat.
+  updateDoorPassThroughCamera(t) {
+    this.scrollCameraBase.position.lerpVectors(this.doorPassThroughStartPosition, this.doorPassThroughEndPosition, t);
+    this.scrollCameraBase.lookAt.lerpVectors(this.doorPassThroughStartLookAt, this.doorPassThroughEndLookAt, t);
+    // this.doorEndPlane starts transparent (see buildDoorStairs above) - only
+    // fades in once the camera actually starts this move toward the doorway,
+    // tracking t directly rather than a separately-eased tween so it stays
+    // perfectly in sync with the dolly itself.
+    this.doorEndPlane.material.opacity = t;
   }
 
   update() {

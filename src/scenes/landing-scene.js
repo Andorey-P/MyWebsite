@@ -203,10 +203,17 @@ export default class LandingScene extends BaseThreeJS{
     canvas.width = 1024;
     canvas.height = 1024;
 
+    // Two-tone checker, both derived from PALETTE.paper rather than hardcoded
+    // hex - the old literals ('#ffe2ac'/'#FAD287') predated PALETTE and the
+    // second one read noticeably more saturated than the muted "mid-century
+    // math textbook" tone every other chapter's materials use. Shading toward
+    // PALETTE.ink keeps the checker in that same desaturated family.
+    const paperTile = new THREE.Color(PALETTE.paper);
+    const paperTileShaded = paperTile.clone().lerp(new THREE.Color(PALETTE.ink), 0.1);
     const tileSize = 64; // Size of each square
     for (let y = 0; y < canvas.height / tileSize; y++) {
       for (let x = 0; x < canvas.width / tileSize; x++) {
-        ctx.fillStyle = (x + y) % 2 === 0 ? '#ffe2ac' : '#FAD287'; // Alternate colors
+        ctx.fillStyle = (x + y) % 2 === 0 ? `#${paperTile.getHexString()}` : `#${paperTileShaded.getHexString()}`;
         ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
       }
     }

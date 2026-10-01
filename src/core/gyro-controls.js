@@ -65,6 +65,14 @@ export function initGyroPermissionButton() {
     gyroDebugLog(`gyro: no requestPermission() - events should fire directly\nsecure context: ${window.isSecureContext}`);
     return;
   }
+  // Desktop Safari (macOS) also exposes DeviceOrientationEvent.requestPermission,
+  // even though there's no tilt sensor to permission-gate - without this check
+  // the button shows up there too. Gate on the same mobile breakpoint the
+  // scenes use to decide whether to read tilt at all.
+  if (!isMobileViewport.matches) {
+    gyroDebugLog(`gyro: requestPermission() found but viewport isn't mobile - not showing button\nsecure context: ${window.isSecureContext}`);
+    return;
+  }
   const btn = document.getElementById('gyro-permission-btn');
   if (!btn) return;
   gyroDebugLog(`gyro: requestPermission() found, showing button\nsecure context: ${window.isSecureContext}`);

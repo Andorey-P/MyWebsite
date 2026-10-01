@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Website</title>
-    <script type="module" crossorigin src="/MyWebsite/assets/index-_KRVLEWt.js"></script>
-    <link rel="stylesheet" crossorigin href="/MyWebsite/assets/index-COIg-nM3.css">
+    <script type="module" crossorigin src="/MyWebsite/assets/index-CEQEvyUy.js"></script>
+    <link rel="stylesheet" crossorigin href="/MyWebsite/assets/index-nmUuyN8V.css">
   </head>
   <body>
 
@@ -22,9 +22,13 @@
 
       <nav class="site-header-nav" aria-label="Primary" >
         <a href="index.html" class="site-header-link" aria-current="page">Home</a>
+        <!-- Other sections not built yet - restore these once they exist,
+             and drop the .site-header-status note below.
         <a href="#" class="site-header-link">Works</a>
         <a href="#" class="site-header-link">About</a>
         <a href="#" class="site-header-link">Contact</a>
+        -->
+        <span class="site-header-status">More in construction</span>
         <!-- <a href="#" class="site-header-sphere" aria-label="Menu"></a> -->
       </nav>
     </header>
@@ -158,11 +162,20 @@
                dots, which are all z-index:auto) so it stacks above them
                regardless of the dots being appended into this same container
                after it at runtime. -->
+          <!-- Works/About/Contact are commented out until those sections
+               exist - the container keeps its .chapter-six-reveal-links class
+               so main.js's existing autoAlpha fade still drives the
+               "in construction" note that stands in for them for now.
           <nav class="chapter-six-reveal-links">
             <a href="#" class="chapter-six-reveal-links-link">Works</a>
             <a href="#" class="chapter-six-reveal-links-link">About</a>
             <a href="#" class="chapter-six-reveal-links-link">Contact</a>
           </nav>
+          -->
+          <div class="chapter-six-reveal-links">
+            <p class="chapter-six-reveal-construction-title">To be continued</p>
+            <p class="chapter-six-reveal-construction-sub">The rest of this site is under construction.</p>
+          </div>
         </div>
 
         <!-- PLACEHOLDER copy - swap for real chapter seven title/subtitle.
@@ -172,7 +185,7 @@
           <div class="chapter-seven-description-left">
             <h6 class="chapter-number">Chapter 07<span class="chapter-number-sub">— Threshold</span></h6>
             <h1 class="split-reveal-seven">Threshold</h1>
-            <h3 class="split-reveal-seven">Placeholder copy - swap this out. What lies beyond the door is a different kind of space entirely.</h3>
+            <h3 class="split-reveal-seven">Understanding is built one step at a time. Before we know it, we're at the door to something new.</h3>
           </div>
         </div>
 

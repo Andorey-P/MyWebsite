@@ -1,40 +1,193 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
+    <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Website</title>
-    <script type="module" crossorigin src="/MyWebsite/assets/index-CmhBpOuP.js"></script>
-    <link rel="stylesheet" crossorigin href="/MyWebsite/assets/index-CHvGV3_S.css">
+    <script type="module" crossorigin src="/MyWebsite/assets/index-_KRVLEWt.js"></script>
+    <link rel="stylesheet" crossorigin href="/MyWebsite/assets/index-COIg-nM3.css">
   </head>
-  <body class="hidden">
+  <body>
+
+    <header id="site-header">
+      <a href="index.html" class="site-header-brand" aria-label="Andrei Platonov — Home">
+        <svg class="site-header-star" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 0C12 6 13 10 24 12C13 14 12 18 12 24C12 18 11 14 0 12C11 10 12 6 12 0Z"/>
+        </svg>
+        <span class="site-header-brand-text">
+          <span class="site-header-name color-red">Andrei Platonov</span>
+          <span class="site-header-tagline">Portfolio</span>
+        </span>
+      </a>
+
+      <nav class="site-header-nav" aria-label="Primary" >
+        <a href="index.html" class="site-header-link" aria-current="page">Home</a>
+        <a href="#" class="site-header-link">Works</a>
+        <a href="#" class="site-header-link">About</a>
+        <a href="#" class="site-header-link">Contact</a>
+        <!-- <a href="#" class="site-header-sphere" aria-label="Menu"></a> -->
+      </nav>
+    </header>
+
+    <!-- Scroll progress indicator, see main.js's scrollProgressFill/the
+         landingSceneTimeline ScrollTrigger's onUpdate. Same z-index as
+         #loading-screen, placed before it in the DOM so the (opaque) loading
+         screen wins the stacking tie until it slides away. -->
+    <div class="scroll-progress" aria-hidden="true">
+      <div class="scroll-progress-fill"></div>
+    </div>
+
     <section id="loading-screen" class="background-white">
-      <div class="bg-div">
-        <img id="loadingHeadGif" src="./gifs/LoadingHead3.gif" alt="loadingHead" width="512" height="512">
-        <div class="loading">LOADING.</div> 
+      <div class="loading-screen-bg">
+        <div class="loading-screen-card">
+          <img id="loadingHeadGif" src="./gifs/LoadingHead3.gif" alt="loadingHead" width="512" height="512">
+        </div>
+        <div class="loading-screen-bg-text">Loading</div>
       </div>
-      <div class="checkeredDiv" style="font-size: .1vw;"></div>
+      <div class="loading-screen-bg-texture"></div>
     </section>
     
     <div id="app">
-      
-      <div id="first-scene" class="background-white" style=" width: 100vw; height: 100vh;">
-        <div class="noiseDiv" style="font-size: .1vw;"></div>
-        <div class="walk">
-          <img src="./gifs/walk.gif" alt="walk cycle">
-        </div>
-        <div class="landing-description color-red">
-          <div class="landing-description-left">
-            <h5 class="chapter-number" >&#8213; Chapter 1: welcome</h5>
-            <h1 class="split">Lorem, ipsum dolor sit amet consectetur adipisicing elit. Molestiae ut, placeat dicta eius laboriosam magnam beatae culpa. Voluptatem nesciunt, porro odit sapiente delectus culpa corrupti quod doloribus odio amet dolorum.</h1>
+
+      <!-- Mobile-only, shown via JS (see initGyroPermissionButton in
+           gyro-controls.js) only on iOS 13+, where DeviceOrientationEvent.requestPermission
+           exists and gates the tilt-driven camera controls in chapter 1/7
+           behind a prompt that WebKit only honors from a real click - a
+           bare touchstart/scroll gesture doesn't satisfy it, hence a real
+           tappable button instead of a silent background request. -->
+      <button id="gyro-permission-btn" class="gyro-permission-btn" type="button" hidden>Tap to enable tilt controls</button>
+
+      <div id="landing-scene" class="background-white">
+
+        <div class="landing-scene-description">
+          <div class="landing-scene-description-left">
+            <h6 class="chapter-number">Chapter 01<span class="chapter-number-sub">— Welcome</span></h6>
+            <h5 class="split">An exhibition</h5>
+            <h1 class="split">of Visual Reasoning</h1>
+            <h3 class="split">This document records a series of chapters exploring perception, interaction, and visual reasoning. A reflection of how I look at things, and how I make sense of them. </h3>
           </div>
-          <div class="landing-description-right"></div>
+          <div class="landing-scene-description-right"></div>
         </div>
+
+        <div class="landing-scene-meta">
+          <span class="landing-scene-meta-left">Andrei Platonov — Multimedia Engineer</span>
+          <span class="landing-scene-meta-right">Scroll to continue<span class="landing-scene-scroll-line"></span></span>
+        </div>
+
+        <div class="chapter-two-description">
+          <div class="chapter-two-description-left">
+            <h6 class="chapter-number">Chapter 02<span class="chapter-number-sub">— Perspective</span></h6>
+            <h1 class="split-reveal">Perspective</h1>
+            <h3 class="split-reveal">Sometimes the simplest message can only be seen from the right point of view. Observation comes first. Understanding follows.</h3>
+          </div>
+        </div>
+
+        <div class="chapter-three-description">
+          <div class="chapter-three-description-left">
+            <h6 class="chapter-number">Chapter 03<span class="chapter-number-sub">— Exploration</span></h6>
+            <h1 class="split-reveal-three">Exploration</h1>
+            <h3 class="split-reveal-three">Every breakthrough begins with an anomaly. What follows depends on the willingness to explore it.</h3>
+          </div>
+        </div>
+
+        <div class="chapter-four-description">
+          <div class="chapter-four-description-left">
+            <h6 class="chapter-number">Chapter 04<span class="chapter-number-sub">— Exception</span></h6>
+            <h1 class="split-reveal-four">Exception</h1>
+            <h3 class="split-reveal-four">Most things follow a pattern. The interesting ones make us wonder why.</h3>
+          </div>
+        </div>
+
+        <div class="chapter-five-description">
+          <div class="chapter-five-description-left">
+            <h6 class="chapter-number">Chapter 05<span class="chapter-number-sub">— Uncertainty</span></h6>
+            <h1 class="split-reveal-five">Uncertainty</h1>
+            <h3 class="split-reveal-five">Understanding how something works does not always mean knowing what it will do.</h3>
+          </div>
+        </div>
+
+        <!-- Chapter six (Emergence, the shapes swarm) is currently shelved in
+             main.js in favor of the lattice reveal chapter below, which
+             occupies its numbered slot - left intact, unused, for a one-step
+             revert. -->
+        <div class="chapter-six-description">
+          <div class="chapter-six-description-left">
+            <h6 class="chapter-number">Chapter 06<span class="chapter-number-sub">— Emergence</span></h6>
+            <h1 class="split-reveal-six">Emergence</h1>
+            <h3 class="split-reveal-six">Every piece finds its own shape. Held together by nothing but constant attraction, they become something no single one could be.</h3>
+          </div>
+        </div>
+
+        <div class="chapter-lattice-description">
+          <div class="chapter-lattice-hover-zone" aria-hidden="true"></div>
+
+          <div class="chapter-lattice-description-left">
+            <h6 class="chapter-number">Chapter 06<span class="chapter-number-sub">— Detail</span></h6>
+            <h1 class="split-reveal-lattice">Detail</h1>
+            <h3 class="split-reveal-lattice">Meaning takes shape gradually. Sometimes clarity is simply a matter of seeing enough of the pieces.</h3>
+          </div>
+
+          <div class="chapter-lattice-resolution">
+            <span class="chapter-lattice-resolution-label" aria-hidden="true">&times;</span>
+            <div class="chapter-lattice-resolution-grid" role="group" aria-label="Lattice grid resolution">
+              <button type="button" class="chapter-lattice-resolution-btn" data-lattice-n="24" aria-pressed="true">24</button>
+              <button type="button" class="chapter-lattice-resolution-btn" data-lattice-n="48" aria-pressed="false">48</button>
+              <button type="button" class="chapter-lattice-resolution-btn" data-lattice-n="72" aria-pressed="false">72</button>
+              <button type="button" class="chapter-lattice-resolution-btn" data-lattice-n="96" aria-pressed="false">96</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Windows scene: swapped in via setActiveScene() right as the closing wipe
+             finishes covering the screen (see main.js), sitting behind the dots so the
+             swap is invisible until they shrink back away. Chapter seven's own closing
+             wipe (see main.js's DOOR_MASK_START section) drives a CSS mask-image
+             directly on this element - a grid of square cells that dissolve away in a
+             random per-cell order, clipping this element's own content away cell by
+             cell, rather than an overlay painted on top - so whatever's genuinely
+             underneath (currently .chapter-six-reveal's backdrop) shows through the
+             dissolved cells as-is. -->
+        <div id="windows-scene" class="windows-scene"></div>
+
+        <!-- Closing wipe: growing circle-grid reveal, see main.js's CHAPTER_SIX_REVEAL section. -->
+        <div class="chapter-six-reveal" aria-hidden="true">
+          <!-- Threshold links: Works/About/Contact, stacked large and dead-center,
+               faded in via GSAP autoAlpha (see main.js's DOOR_PASS_THROUGH_END
+               call()) the instant the camera reaches the end of the door, and
+               back out on scroll-back. z-index set explicitly (unlike the reveal
+               dots, which are all z-index:auto) so it stacks above them
+               regardless of the dots being appended into this same container
+               after it at runtime. -->
+          <nav class="chapter-six-reveal-links">
+            <a href="#" class="chapter-six-reveal-links-link">Works</a>
+            <a href="#" class="chapter-six-reveal-links-link">About</a>
+            <a href="#" class="chapter-six-reveal-links-link">Contact</a>
+          </nav>
+        </div>
+
+        <!-- PLACEHOLDER copy - swap for real chapter seven title/subtitle.
+             Placed after .windows-scene/.chapter-six-reveal so it stacks above
+             both (same z-index, later in DOM order wins). -->
+        <div class="chapter-seven-description">
+          <div class="chapter-seven-description-left">
+            <h6 class="chapter-number">Chapter 07<span class="chapter-number-sub">— Threshold</span></h6>
+            <h1 class="split-reveal-seven">Threshold</h1>
+            <h3 class="split-reveal-seven">Placeholder copy - swap this out. What lies beyond the door is a different kind of space entirely.</h3>
+          </div>
+        </div>
+
+        <div class="noise-overlay"></div>
+
       </div>
-      <div id='someSpace' class="someSpace background-green" style=" width: 100vw; height: 30vh;"></div>
-      <div id="second-scene" class="background-blue" style="width: 100vw; height: 100vh;"></div>
 
     </div>
-    
+
+    <!-- "Lenna" cursor-follow tooltip, shown while hovering the lattice grid
+         in chapter 6 - see .chapter-lattice-hover-zone above and main.js.
+         A top-level fixed element (not nested in the chapter overlay) so its
+         own position:fixed follows the cursor anywhere on screen without
+         being constrained by an ancestor's positioning context. -->
+    <div class="lattice-hover-tooltip" aria-hidden="true">Lenna</div>
+
   </body>
 </html>
